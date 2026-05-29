@@ -1,0 +1,6 @@
+{
+  "name": "Animal Clicker",
+  "description": "An addictive, beautifully styled animal clicking game featuring unlocks, skins, dynamic power-up boosts, and a competitive active simulated leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

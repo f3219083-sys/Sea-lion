@@ -68,6 +68,8 @@ fun GameScreen(
     val playerState by viewModel.playerState.collectAsStateWithLifecycle()
     val liveClicks by viewModel.liveClicks.collectAsStateWithLifecycle()
     val leaderboard by viewModel.rawLeaderboard.collectAsStateWithLifecycle()
+    val isClickerLocked by viewModel.isClickerLocked.collectAsStateWithLifecycle()
+    val playTabPressCount by viewModel.playTabPressCount.collectAsStateWithLifecycle()
 
     var activeTab by remember { mutableIntStateOf(0) } // 0: Clicker, 1: Shop, 2: Skins, 3: Leaderboard
 
@@ -179,7 +181,13 @@ fun GameScreen(
             ) {
                 NavigationBarItem(
                     selected = activeTab == 0,
-                    onClick = { activeTab = 0 },
+                    onClick = {
+                        if (isClickerLocked) {
+                            viewModel.incrementPlayTabPress()
+                        } else {
+                            activeTab = 0
+                        }
+                    },
                     icon = { Icon(if (activeTab == 0) Icons.Filled.PlayArrow else Icons.Outlined.PlayArrow, contentDescription = "Play") },
                     label = { Text("Play") },
                     colors = NavigationBarItemDefaults.colors(
@@ -281,18 +289,19 @@ fun GameScreen(
                 ) {
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Global Stats Panel Headers
-                    StatsHeaderWidget(
-                        liveClicksValue = liveClicks ?: safeState.currentClicks,
-                        totalClicksValue = safeState.totalClicks,
-                        cps = viewModel.calculateCPS(safeState),
-                        currentLevel = safeState.currentLevel,
-                        skinId = safeState.equippedSkinId,
-                        activeTab = activeTab,
-                        viewModel = viewModel
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
+                    // Global Stats Panel Headers (Hidden on Play Tab for immersive UX)
+                    if (activeTab != 0) {
+                        StatsHeaderWidget(
+                            liveClicksValue = liveClicks ?: safeState.currentClicks,
+                            totalClicksValue = safeState.totalClicks,
+                            cps = viewModel.calculateCPS(safeState),
+                            currentLevel = safeState.currentLevel,
+                            skinId = safeState.equippedSkinId,
+                            activeTab = activeTab,
+                            viewModel = viewModel
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
 
                     // Central view based on Tab
                     Box(
@@ -737,6 +746,15 @@ fun AutoClickerRing(numPointers: Int) {
     }
 }
 
+fun formatCompactNumber(number: Long): String {
+    return when {
+        number >= 1_000_000_000 -> "%.1fB".format(number / 1_000_000_000f).replace(".0", "")
+        number >= 1_000_000 -> "%.1fM".format(number / 1_000_000f).replace(".0", "")
+        number >= 1_000 -> "%.1fk".format(number / 1_000f).replace(".0", "")
+        else -> number.toString()
+    }
+}
+
 @Composable
 fun ClickerPlayground(
     state: PlayerState,
@@ -761,13 +779,16 @@ fun ClickerPlayground(
         }
     )
 
-    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "cosmic") || state.equippedSkinId == ""
-    val titleColor = if (isDarkBackground) Color.White.copy(alpha = 0.9f) else Color(0xFF1C1B1F)
-    val subColor = if (isDarkBackground) Color(0xFFF3EDF7) else Color(0xFF49454F)
+    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora") || state.equippedSkinId == ""
+    val titleColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
+    val subColor = if (isDarkBackground) Color(0xFFF3EDF7).copy(alpha = 0.9f) else Color(0xFF49454F)
 
     var fallingAnimals by remember { mutableStateOf(emptyList<FallingAnimal>()) }
     val currentLevel = state.currentLevel
     val cps = viewModel.calculateCPS(state)
+    val liveClicks by viewModel.liveClicks.collectAsStateWithLifecycle()
+    val isClickerLocked by viewModel.isClickerLocked.collectAsStateWithLifecycle()
+    val playTabPressCount by viewModel.playTabPressCount.collectAsStateWithLifecycle()
 
     // A coroutine that spawns falling animals based on clicker speed (CPS)
     LaunchedEffect(cps, currentLevel) {
@@ -775,7 +796,6 @@ fun ClickerPlayground(
             val delayMs = (1000 / cps).toLong().coerceIn(40, 2000)
             while (true) {
                 delay(delayMs)
-                // Select a random animal up to currentLevel that the user has unlocked
                 val randomLevel = if (currentLevel > 1) Random.nextInt(1, currentLevel + 1) else 1
                 val emoji = viewModel.getAnimalEmoji(randomLevel)
                 val newAnimal = FallingAnimal(
@@ -827,37 +847,83 @@ fun ClickerPlayground(
         // 3. Main Gameplay Column
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 16.dp)
         ) {
-            Text(
-                text = "TAP THE ANIMAL!",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Black,
-                    color = titleColor,
-                    letterSpacing = 2.sp,
-                    shadow = if (isDarkBackground) Shadow(Color.Black, blurRadius = 4f) else null
+            // Immersive Top HUD (replaces large StatsHeaderWidget on Tab 0)
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .border(
+                        1.dp,
+                        if (isDarkBackground) Color.White.copy(alpha = 0.2f) else Color(0xFFCAC4D0).copy(alpha = 0.6f),
+                        RoundedCornerShape(16.dp)
+                    ),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = if (isDarkBackground) Color.Black.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.9f)
                 )
-            )
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = viewModel.getAnimalTierName(currentLevel).uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isDarkBackground) Color(0xFFFFD700) else Color(0xFF6750A4),
+                            letterSpacing = 1.5.sp
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "🐾 ${liveClicks ?: state.currentClicks}",
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontWeight = FontWeight.Black,
+                            fontSize = 36.sp,
+                            color = titleColor,
+                            shadow = Shadow(Color.Black.copy(alpha = 0.2f), blurRadius = 3f)
+                        ),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "${viewModel.getAnimalEmoji(currentLevel)} Level $currentLevel: ${viewModel.getAnimalNameForLevel(currentLevel)}",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = titleColor.copy(alpha = 0.9f)
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (isDarkBackground) Color.White.copy(alpha = 0.12f) else Color(0x1F6750A4))
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⚡ Automatics: %.1f/sec".format(cps),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isDarkBackground) Color.White else Color(0xFF21005D)
+                            )
+                        )
+                    }
+                }
+            }
 
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Text(
-                text = "Total Clicks",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = subColor.copy(alpha = 0.7f),
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Main Clicker Animal Card Box with Absolute overlay multiplier badge
+            // Central Clicker Animal Box with Absolute overlay multiplier badge
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 12.dp)
             ) {
-                // Background Auto-Clicker Finger Ring
                 val numPointers = remember(state) {
                     val totalUpgrades = state.hamsterWheelCount + state.catScratchCount + state.dogBoneCount
                     totalUpgrades.coerceAtMost(16)
@@ -866,7 +932,7 @@ fun ClickerPlayground(
 
                 Box(
                     modifier = Modifier
-                        .size(240.dp)
+                        .size(230.dp)
                         .graphicsLayer {
                             scaleX = animatedScale
                             scaleY = animatedScale
@@ -876,29 +942,29 @@ fun ClickerPlayground(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) {
-                            scale = 0.85f
-                            viewModel.onAnimalClicked()
-                            val randomX = Random.nextInt(-100, 100).toFloat()
-                            val randomY = Random.nextInt(-100, 0).toFloat()
-                            onFloatingIndicatorAdded("+${viewModel.calculateClicksPerTap(state)}", randomX, randomY)
+                            if (!isClickerLocked) {
+                                scale = 0.85f
+                                viewModel.onAnimalClicked()
+                                val randomX = Random.nextInt(-100, 100).toFloat()
+                                val randomY = Random.nextInt(-100, 0).toFloat()
+                                onFloatingIndicatorAdded("+${viewModel.calculateClicksPerTap(state)}", randomX, randomY)
 
-                            // Click induced falling animal cloned tap effect
-                            val tapAnimal = FallingAnimal(
-                                id = System.nanoTime(),
-                                emoji = viewModel.getAnimalEmoji(state.currentLevel),
-                                xPercent = Random.nextFloat() * 0.5f + 0.25f,
-                                y = 250f,
-                                speed = Random.nextFloat() * 3f + 6f,
-                                rotationSpeed = Random.nextFloat() * 12f - 6f,
-                                scale = Random.nextFloat() * 0.3f + 0.7f,
-                                rotation = Random.nextFloat() * 360f,
-                                creationTime = System.currentTimeMillis()
-                            )
-                            fallingAnimals = (fallingAnimals + tapAnimal).take(35)
+                                val tapAnimal = FallingAnimal(
+                                    id = System.nanoTime(),
+                                    emoji = viewModel.getAnimalEmoji(state.currentLevel),
+                                    xPercent = Random.nextFloat() * 0.5f + 0.25f,
+                                    y = 250f,
+                                    speed = Random.nextFloat() * 3f + 6f,
+                                    rotationSpeed = Random.nextFloat() * 12f - 6f,
+                                    scale = Random.nextFloat() * 0.3f + 0.7f,
+                                    rotation = Random.nextFloat() * 360f,
+                                    creationTime = System.currentTimeMillis()
+                                )
+                                fallingAnimals = (fallingAnimals + tapAnimal).take(35)
+                            }
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    // Apply visual skin backgrounds/borders
                     val skinModifier = when (state.equippedSkinId) {
                         "cyberpunk" -> Modifier
                             .fillMaxSize()
@@ -932,17 +998,27 @@ fun ClickerPlayground(
                             .fillMaxSize()
                             .border(5.dp, Brush.linearGradient(listOf(Color(0xFFFFD700), Color(0xFFDAA520))), CircleShape)
                             .background(Color(0xFF4B0082), CircleShape)
+                        "lava_fire" -> Modifier
+                            .fillMaxSize()
+                            .border(5.dp, Brush.linearGradient(listOf(Color(0xFF801000), Color(0xFFFF4500))), CircleShape)
+                            .background(Color(0xFF2B0F00), CircleShape)
                         "cosmic" -> Modifier
                             .fillMaxSize()
                             .border(6.dp, Brush.linearGradient(listOf(Color(0xFFBA55D3), Color(0xFF4B0082), Color(0xFF00FFFF))), CircleShape)
                             .background(Color(0xFF0C0728), CircleShape)
+                        "neon_cyber" -> Modifier
+                            .fillMaxSize()
+                            .border(5.dp, Brush.linearGradient(listOf(Color(0xFF00334D), Color(0xFF00F0FF))), CircleShape)
+                            .background(Color(0xFF00111A), CircleShape)
+                        "magic_aurora" -> Modifier
+                            .fillMaxSize()
+                            .border(5.dp, Brush.linearGradient(listOf(Color(0xFF3A0066), Color(0xFF00FFCC))), CircleShape)
+                            .background(Color(0xFF0F001D), CircleShape)
                         else -> Modifier
                             .fillMaxSize()
                             .border(8.dp, Color.White, CircleShape)
                             .background(
-                                Brush.linearGradient(
-                                    listOf(Color(0xFFD0BCFF), Color(0xFFEADDFF))
-                                ),
+                                Brush.linearGradient(listOf(Color(0xFFD0BCFF), Color(0xFFEADDFF))),
                                 CircleShape
                             )
                     }
@@ -951,13 +1027,11 @@ fun ClickerPlayground(
                         modifier = skinModifier,
                         contentAlignment = Alignment.Center
                     ) {
-                        // Back glows for legendary skins
                         if (state.equippedSkinId == "god") {
                             GodGlowRaysWidget()
                         }
 
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            // Main Target Emoji
                             Text(
                                 text = viewModel.getAnimalEmoji(state.currentLevel),
                                 style = androidx.compose.ui.text.TextStyle(
@@ -966,7 +1040,6 @@ fun ClickerPlayground(
                                 )
                             )
 
-                            // Cute skin accessories
                             Text(
                                 text = when (state.equippedSkinId) {
                                     "cyberpunk" -> "🕶️ Cyber Mode"
@@ -976,7 +1049,10 @@ fun ClickerPlayground(
                                     "retro" -> "👾 8-Bit Retro"
                                     "shadow" -> "🥷 Shadow Ninja"
                                     "royal" -> "👑 Royal Crown"
+                                    "lava_fire" -> "🌋 Volcanic Fury"
                                     "cosmic" -> "🌌 Cosmic Nebula"
+                                    "neon_cyber" -> "⚡ Hyper Grid"
+                                    "magic_aurora" -> "🔮 Elven Aurora"
                                     else -> "❤️ Level ${state.currentLevel}"
                                 },
                                 style = MaterialTheme.typography.labelLarge.copy(
@@ -1006,35 +1082,7 @@ fun ClickerPlayground(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Total statistics label
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, Color(0xFFCAC4D0).copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                    .background(if (isDarkBackground) Color.Black.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.9f))
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Stars, 
-                    contentDescription = "Total", 
-                    tint = if (isDarkBackground) Color(0xFFFFD700) else Color(0xFF6750A4), 
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Lifetime Clicks: ${state.totalClicks}",
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        color = if (isDarkBackground) Color.White else Color(0xFF1C1B1F),
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.Monospace
-                    )
-                )
-            }
-
-            // Skin Unlock Tracker
+            // Skin Unlock Tracker Spacer + Text
             val nextLockedSkin = when {
                 state.totalClicks < 200 -> Pair("cyberpunk", 200L)
                 state.totalClicks < 1000 -> Pair("pirate", 1000L)
@@ -1044,43 +1092,45 @@ fun ClickerPlayground(
                 state.totalClicks < 150000 -> Pair("retro", 150000L)
                 state.totalClicks < 500000 -> Pair("shadow", 500000L)
                 state.totalClicks < 2000000 -> Pair("royal", 2000000L)
+                state.totalClicks < 5000000 -> Pair("lava_fire", 5000000L)
                 state.totalClicks < 10000000 -> Pair("cosmic", 10000000L)
+                state.totalClicks < 100000000 -> Pair("neon_cyber", 100000000L)
+                state.totalClicks < 1000000000 -> Pair("magic_aurora", 1000000000L)
                 else -> null
             }
 
             if (nextLockedSkin != null) {
-                Spacer(modifier = Modifier.height(24.dp))
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.testTag("skin_unlock_tracker")
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .testTag("skin_unlock_tracker")
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .background(Color(0xFFF3EDF7), RoundedCornerShape(16.dp))
-                            .border(1.dp, Color(0xFFCAC4D0), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .background(
+                                if (isDarkBackground) Color.Black.copy(alpha = 0.5f) else Color(0xFFF3EDF7),
+                                RoundedCornerShape(16.dp)
+                            )
+                            .border(1.dp, if (isDarkBackground) Color.White.copy(alpha = 0.2f) else Color(0xFFCAC4D0), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.LockOpen,
                             contentDescription = "Lock",
-                            tint = Color(0xFF6750A4),
+                            tint = if (isDarkBackground) Color(0xFFFFD700) else Color(0xFF6750A4),
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        val milestoneText = when {
-                            nextLockedSkin.second >= 1000000000L -> "${nextLockedSkin.second / 1000000000f}B"
-                            nextLockedSkin.second >= 1000000L -> "${nextLockedSkin.second / 1000000f}M"
-                            nextLockedSkin.second >= 1000L -> "${nextLockedSkin.second / 1000f}k"
-                            else -> "${nextLockedSkin.second}"
-                        }.replace(".0", "")
+                        val milestoneText = formatCompactNumber(nextLockedSkin.second)
                         Text(
                             text = "Next Skin: $milestoneText Clicks",
-                            color = Color(0xFF1D192B),
+                            color = if (isDarkBackground) Color.White else Color(0xFF1D192B),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold)
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = viewModel.getSkinNameForId(nextLockedSkin.first).uppercase(),
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -1090,10 +1140,12 @@ fun ClickerPlayground(
                         )
                     )
                 }
+            } else {
+                Spacer(modifier = Modifier.height(30.dp))
             }
         }
 
-        // Rising indicators layer
+        // 4. Overlaid Rising Indicators Layer
         floatingIndicators.forEach { indicator ->
             val elapsed = System.currentTimeMillis() - indicator.creationTime
             val t = (elapsed.toFloat() / 800f).coerceIn(0f, 1f)
@@ -1122,16 +1174,89 @@ fun ClickerPlayground(
                             "cyberpunk" -> Color.Cyan
                             "astronaut" -> Color(0xFF2196F3)
                             "god" -> Color(0xFFFFD700)
+                            "pirate" -> Color(0xFFCD853F)
                             "steampunk" -> Color(0xFFCD853F)
                             "retro" -> Color(0xFF00FF00)
                             "shadow" -> Color.Red
                             "royal" -> Color(0xFFBA55D3)
+                            "lava_fire" -> Color(0xFFFF4500)
                             "cosmic" -> Color(0xFF00FFFF)
+                            "neon_cyber" -> Color(0xFF00F0FF)
+                            "magic_aurora" -> Color(0xFF00FFCC)
                             else -> Color.White
                         },
                         shadow = Shadow(Color.Black, offset = Offset(1f, 1f), blurRadius = 4f)
                     )
                 )
+            }
+        }
+
+        // 5. TRANSLUCENT OVERLAY WHEN AUTO-CLICKER IS LOCKED (PROMPT 6 & 7 REQUIREMENT)
+        if (isClickerLocked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.92f))
+                    .clickable(enabled = true, onClick = {}), // consumes clicks to block screen
+                contentAlignment = Alignment.Center
+            ) {
+                ElevatedCard(
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f)
+                        .border(2.dp, Color.Red, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF250202)),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "🤖 ΑΝΙΧΝΕΥΤΗΚE AUTO CLICKER! 🤖",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.Red,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "Έχετε αποκλειστεί προσωρινά διότι ανιχνεύτηκε εξαιρετικά γρήγορο clicking. Παρακαλώ παίξτε καθαρά!",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text(
+                            text = "Ποινή: -1,000 κλικ!",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                            color = Color(0xFFFFB4AB),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text(
+                            text = "Για να ξεκλειδώσετε το παιχνίδι, πρέπει να κάνετε κλικ στο κουμπί 'Play' (στο κάτω μενού) 10 φορές!",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        
+                        // Counter progress bar
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Πατήθηκε: $playTabPressCount / 10 φορές",
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1412,7 +1537,7 @@ fun ShopUpgradesPanel(
                                 text = item.description,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textSubColor.copy(alpha = 0.85f),
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 fontSize = 10.sp
                             )
@@ -1451,7 +1576,7 @@ fun ShopUpgradesPanel(
                                     fontSize = 11.sp
                                 )
                                 Text(
-                                    text = "🐾 $cost",
+                                    text = "🐾 ${formatCompactNumber(cost)}",
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                                     fontSize = 9.sp
                                 )
@@ -1488,12 +1613,15 @@ fun SkinsWardrobePanel(
         SkinData("retro", "8-Bit Retro", "Retro arcade monitor border with pixel green CRT glow.", "👾 Green Glow", 150000, "+250 Bonus Clicks per tap"),
         SkinData("shadow", "Shadow Ninja", "Sleek crimson ninja mask wrapped in shadow dust.", "🥷 Stealth Dust", 500000, "+750 Bonus Clicks per tap"),
         SkinData("royal", "Royal Crown", "Velvet royal purple frame seated with shimmering monarch crowns.", "👑 Velvet Crown", 2000000, "+2.5k Bonus Clicks per tap"),
-        SkinData("cosmic", "Cosmic Nebula", "A moving planetary outer orbit with glowing neon rings.", "🌌 Starry Rings", 10000000, "+10k Bonus Clicks per tap")
+        SkinData("lava_fire", "Volcanic Fury", "Molten volcanic magma aura with crackling embers.", "🌋 Volcanic Aura", 5000000, "+5.0k Bonus Clicks per tap"),
+        SkinData("cosmic", "Cosmic Nebula", "A moving planetary outer orbit with glowing neon rings.", "🌌 Starry Rings", 10000000, "+10k Bonus Clicks per tap"),
+        SkinData("neon_cyber", "Hyper Grid", "A futuristic holographic computing grid with matrix coding.", "⚡ Hyper Grid", 100000000, "+50k Bonus Clicks per tap"),
+        SkinData("magic_aurora", "Elven Aurora", "Magical northern lights glowing with enchanted spell circles.", "🔮 Northern Glow", 1000000000, "+250k Bonus Clicks per tap")
     )
 
     val unlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
 
-    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "cosmic")
+    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora")
     val titleTextColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
 
     Column(
@@ -1666,7 +1794,7 @@ fun UnlocksProgressionPanel(
     state: PlayerState,
     viewModel: GameViewModel
 ) {
-    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "cosmic")
+    val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora")
     val titleTextColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
 
     val currentLevel = state.currentLevel

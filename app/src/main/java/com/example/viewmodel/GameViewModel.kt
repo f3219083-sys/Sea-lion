@@ -40,8 +40,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiEvents = MutableSharedFlow<GameUiEvent>()
     val uiEvents: SharedFlow<GameUiEvent> = _uiEvents.asSharedFlow()
 
-    // Current player state flow directly from Room
-    val playerState: StateFlow<PlayerState?>
+    // Current player state tracked in memory for 100% lag-free responsiveness
+    private val _playerStateMem = MutableStateFlow<PlayerState?>(null)
+    val playerState: StateFlow<PlayerState?> = _playerStateMem.asStateFlow()
 
     // Leaderboard flow directly from Room
     val rawLeaderboard: StateFlow<List<LeaderboardEntry>>
@@ -50,15 +51,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _liveClicks = MutableStateFlow<Long?>(null)
     val liveClicks: StateFlow<Long?> = _liveClicks.asStateFlow()
 
+    // Autoclicker detection and locking states
+    val isClickerLocked = MutableStateFlow(false)
+    val playTabPressCount = MutableStateFlow(0)
+    private val clickTimestamps = mutableListOf<Long>()
+
+    private var isSavePending = false
+
     init {
         val database = GameDatabase.getDatabase(application)
         repository = GameRepository(database.gameDao())
-
-        playerState = repository.playerState.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = null
-        )
 
         rawLeaderboard = repository.leaderboard.stateIn(
             scope = viewModelScope,
@@ -70,11 +72,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.setupDefaultLeaderboardIfEmpty()
             val initial = repository.getPlayerStateSync()
+            _playerStateMem.value = initial
             _liveClicks.value = initial.currentClicks
 
-            // Start clock loop for auto-clicking and AI/leaderboard challenge updates
+            // Start clock loop for auto-clicking, AI, and saving updates
             launch { startAutoClickerLoop() }
             launch { startLeaderboardSimulationLoop() }
+            launch { startDatabaseSyncLoop() }
+        }
+    }
+
+    // Database syncing background loop (persists memory updates periodically)
+    private suspend fun startDatabaseSyncLoop() {
+        while (true) {
+            delay(1500)
+            if (isSavePending) {
+                _playerStateMem.value?.let { state ->
+                    repository.updatePlayerState(state)
+                    syncUserWithLeaderboard(state)
+                    isSavePending = false
+                }
+            }
         }
     }
 
@@ -125,7 +143,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                (state.blackHoleCount * 30000.0)
     }
 
-    // Calculate clicks per tap
+    // Calculate clicks per tap - REMOVED Level multiplier to fulfill user's "what you upgrade is what you get" rule
     fun calculateClicksPerTap(state: PlayerState): Long {
         val skinBonus = when (state.equippedSkinId) {
             "cyberpunk" -> 2
@@ -136,69 +154,121 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             "retro" -> 250
             "shadow" -> 750
             "royal" -> 2500
+            "lava_fire" -> 5000
             "cosmic" -> 10000
+            "neon_cyber" -> 50000
+            "magic_aurora" -> 250000
             else -> 0
         }
-        val levelFactor = when (state.currentLevel) {
-            2 -> 2
-            3 -> 3
-            4 -> 5
-            5 -> 10
-            6 -> 25
-            7 -> 75
-            8 -> 200
-            9 -> 600
-            10 -> 2000
-            11 -> 7000
-            12 -> 25000
-            13 -> 100000
-            14 -> 400000
-            15 -> 1500000
-            else -> 1
-        }
-        return (state.clickPowerLevel * levelFactor + skinBonus).toLong()
+        return (state.clickPowerLevel + skinBonus).toLong()
     }
 
     // Handles an user click
     fun onAnimalClicked() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val state = repository.getPlayerStateSync()
-            val tapBonus = calculateClicksPerTap(state)
+        if (isClickerLocked.value) return
 
-            val nextTotalClicks = state.totalClicks + tapBonus
-            val nextCurrentClicks = state.currentClicks + tapBonus
+        val now = System.currentTimeMillis()
+        synchronized(clickTimestamps) {
+            clickTimestamps.add(now)
+            if (clickTimestamps.size > 12) {
+                clickTimestamps.removeAt(0)
+            }
+            if (clickTimestamps.size >= 12) {
+                val timeSpan = now - clickTimestamps[0]
+                // 12 taps in less than 500ms means >24 CPS, physically impossible for human fingers
+                if (timeSpan < 500) {
+                    triggerAutoclickerPenalty()
+                    return
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            val currentState = _playerStateMem.value ?: return@launch
+            val tapBonus = calculateClicksPerTap(currentState)
+
+            val nextTotalClicks = currentState.totalClicks + tapBonus
+            val nextCurrentClicks = currentState.currentClicks + tapBonus
 
             _liveClicks.value = nextCurrentClicks
 
-            updateStateAndCheckMilestones(state, nextTotalClicks, nextCurrentClicks)
+            updateStateInMemoryAndCheckMilestones(currentState, nextTotalClicks, nextCurrentClicks)
         }
     }
 
-    private suspend fun updateStateAndCheckMilestones(
+    private fun triggerAutoclickerPenalty() {
+        isClickerLocked.value = true
+        playTabPressCount.value = 0
+        viewModelScope.launch {
+            val currentState = _playerStateMem.value ?: return@launch
+            
+            // Deduct 1000 clicks unless score is low (e.g. at or below 500) to protect new users
+            val nextCurrent = if (currentState.currentClicks > 500L) {
+                (currentState.currentClicks - 1000L).coerceAtLeast(0L)
+            } else {
+                currentState.currentClicks
+            }
+            val nextTotal = if (currentState.totalClicks > 500L) {
+                (currentState.totalClicks - 1000L).coerceAtLeast(0L)
+            } else {
+                currentState.totalClicks
+            }
+
+            _liveClicks.value = nextCurrent
+            val updated = currentState.copy(
+                currentClicks = nextCurrent,
+                totalClicks = nextTotal
+            )
+            _playerStateMem.value = updated
+            isSavePending = true
+            
+            repository.updatePlayerState(updated) // Save penalty to DB immediately
+            _uiEvents.emit(GameUiEvent.GeneralError("Ανιχνεύτηκε Auto Clicker! Ποινή: -1,000 κλικ. Πιέστε το κουμπί 'Play' 10 φορές για ξεκλείδωμα!"))
+        }
+    }
+
+    // Increments bottom navigation tab clicks to bypass the penalty warning
+    fun incrementPlayTabPress() {
+        if (!isClickerLocked.value) return
+        val nextVal = playTabPressCount.value + 1
+        playTabPressCount.value = nextVal
+        if (nextVal >= 10) {
+            isClickerLocked.value = false
+            playTabPressCount.value = 0
+            synchronized(clickTimestamps) {
+                clickTimestamps.clear()
+            }
+            viewModelScope.launch {
+                _uiEvents.emit(GameUiEvent.GeneralError("Το παιχνίδι ξεκλειδώθηκε με επιτυχία! Παρακαλώ παίξτε καθαρά!"))
+            }
+        }
+    }
+
+    private suspend fun updateStateInMemoryAndCheckMilestones(
         state: PlayerState,
         nextTotal: Long,
         nextCurrent: Long
     ) {
-        // Find next level
+        // Find next level based on curation of real-animal categories
         val nextLevel = when {
-            nextTotal >= 200000000000L -> 15 // Supreme Omnipresent
-            nextTotal >= 40000000000L -> 14  // Infinite Singularity
-            nextTotal >= 8000000000L -> 13   // Galaxian Overlord
-            nextTotal >= 1500000000L -> 12  // Chrono Leviathan
-            nextTotal >= 300000000L -> 11   // Cosmic Behemoth
-            nextTotal >= 60000000L -> 10    // Mystic Phoenix
-            nextTotal >= 12000000L -> 9     // Celestial Dragon
-            nextTotal >= 2500000L -> 8      // Majestic Lion
-            nextTotal >= 500000L -> 7       // Colorful Parrot
-            nextTotal >= 100000L -> 6       // Tiny Turtle
-            nextTotal >= 25000L -> 5        // Cheeky Monkey
-            nextTotal >= 5000L -> 4         // Fluffy Bunny
-            nextTotal >= 1000L -> 3         // Alert Doggy
-            nextTotal >= 200L -> 2          // Playful Kitty
-            else -> 1                       // Cute Hamster
+            nextTotal >= 200000000000L -> 15 // Mythical Unicorn (Mythic Masterclass)
+            nextTotal >= 40000000000L -> 14  // Ancient T-Rex (Legendary Category)
+            nextTotal >= 8000000000L -> 13   // Soaring Eagle (Legendary Category)
+            nextTotal >= 1500000000L -> 12  // Giant Whale (Epic Category)
+            nextTotal >= 300000000L -> 11   // Fearsome Tiger (Epic Category)
+            nextTotal >= 60000000L -> 10    // Friendly Panda (Rare Category)
+            nextTotal >= 12000000L -> 9     // Majestic Lion (Rare Category)
+            nextTotal >= 2500000L -> 8      // Clever Fox (Rare Category)
+            nextTotal >= 500000L -> 7       // Colorful Parrot (Uncommon Category)
+            nextTotal >= 100000L -> 6       // Tiny Turtle (Uncommon Category)
+            nextTotal >= 25000L -> 5        // Cheeky Monkey (Uncommon Category)
+            nextTotal >= 5000L -> 4         // Fluffy Bunny (Common Category)
+            nextTotal >= 1000L -> 3         // Loyal Doggy (Common Category)
+            nextTotal >= 200L -> 2          // Playful Kitty (Common Category)
+            else -> 1                       // Cute Hamster (Common Category)
         }
 
-        // Find unlocked skins
+        // Find unlocked skins (Classic + Theme list + 3 newly added specialized skins!)
         val baseSkins = mutableListOf("standard")
         if (nextTotal >= 200) baseSkins.add("cyberpunk")
         if (nextTotal >= 1000) baseSkins.add("pirate")
@@ -208,7 +278,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (nextTotal >= 150000) baseSkins.add("retro")
         if (nextTotal >= 500000) baseSkins.add("shadow")
         if (nextTotal >= 2000000) baseSkins.add("royal")
+        if (nextTotal >= 5000000) baseSkins.add("lava_fire")
         if (nextTotal >= 10000000) baseSkins.add("cosmic")
+        if (nextTotal >= 100000000) baseSkins.add("neon_cyber")
+        if (nextTotal >= 1000000000) baseSkins.add("magic_aurora")
 
         val currentUnlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
         val newlyUnlockedSkins = baseSkins.filter { !currentUnlockedList.contains(it) }
@@ -229,13 +302,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             unlockedSkins = baseSkins.joinToString(",")
         )
 
-        repository.updatePlayerState(updatedState)
-        syncUserWithLeaderboard(updatedState)
+        _playerStateMem.value = updatedState
+        isSavePending = true
     }
 
     fun buyUpgrade(upgradeId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val state = repository.getPlayerStateSync()
+        viewModelScope.launch {
+            val state = _playerStateMem.value ?: return@launch
             val currentVal = when (upgradeId) {
                 "click_power" -> state.clickPowerLevel
                 "hamster_wheel" -> state.hamsterWheelCount
@@ -267,26 +340,28 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     else -> state
                 }
 
-                repository.updatePlayerState(updatedState)
+                _playerStateMem.value = updatedState
+                repository.updatePlayerState(updatedState) // Persist transaction to DB instantly
+                syncUserWithLeaderboard(updatedState)
             } else {
-                _uiEvents.emit(GameUiEvent.GeneralError("Not enough clicks to purchase!"))
+                _uiEvents.emit(GameUiEvent.GeneralError("Δεν έχετε αρκετά 🐾 για αυτή την αναβάθμιση!"))
             }
         }
     }
 
     fun equipSkin(skinId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val state = repository.getPlayerStateSync()
+        viewModelScope.launch {
+            val state = _playerStateMem.value ?: return@launch
             val unlockedSet = state.unlockedSkins.split(",").map { it.trim() }.toSet()
             if (unlockedSet.contains(skinId)) {
                 val updated = state.copy(equippedSkinId = skinId)
-                repository.updatePlayerState(updated)
+                _playerStateMem.value = updated
+                repository.updatePlayerState(updated) // Persist skin selection instantly
             }
         }
     }
 
     private suspend fun syncUserWithLeaderboard(state: PlayerState) {
-        // Sync user's statistics in leaderboard DB
         val currentLeaderboard = repository.getLeaderboardSync().toMutableList()
         val userIdx = currentLeaderboard.indexOfFirst { it.isUser }
 
@@ -311,76 +386,47 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // Auto Clicker Clock Loop (Ticks every 100ms for extra fluid visual responsiveness)
     private suspend fun startAutoClickerLoop() {
-        var accumulatedTicksTime = 0L
-        var lastState = repository.getPlayerStateSync()
-        var currentDouble = lastState.currentClicks.toDouble()
-        var totalDouble = lastState.totalClicks.toDouble()
-        val mutex = Mutex()
-
-        // Sync local double values when DB updates (e.g. from users clicking manually or buying upgrades)
-        viewModelScope.launch {
-            playerState.collect { newState ->
-                if (newState != null) {
-                    mutex.withLock {
-                        val diffCurrent = Math.abs(newState.currentClicks - currentDouble.toLong())
-                        val diffTotal = Math.abs(newState.totalClicks - totalDouble.toLong())
-                        // If a purchase occurred, sync exactly to prevent desyncing
-                        if (diffCurrent > 5 || diffTotal > 5 || newState.clickPowerLevel != lastState.clickPowerLevel) {
-                            currentDouble = newState.currentClicks.toDouble()
-                            totalDouble = newState.totalClicks.toDouble()
-                            lastState = newState
-                            _liveClicks.value = newState.currentClicks
-                        }
-                    }
-                }
-            }
-        }
-
         while (true) {
             delay(100)
-            accumulatedTicksTime += 100
+            val state = _playerStateMem.value ?: continue
+            val cps = calculateCPS(state)
+            if (cps > 0) {
+                val increment = cps * 0.1
+                val nextCurrent = state.currentClicks + increment.toLong()
+                val nextTotal = state.totalClicks + increment.toLong()
 
-            mutex.withLock {
-                val cps = calculateCPS(lastState)
-                if (cps > 0) {
-                    val increment = cps * 0.1
-                    currentDouble += increment
-                    totalDouble += increment
-
-                    val finalClicks = currentDouble.toLong()
-                    _liveClicks.value = finalClicks
-
-                    // Persist the accumulated difference to database every 1 second
-                    if (accumulatedTicksTime >= 1000) {
-                        accumulatedTicksTime = 0
-                        val stateBeforeCommit = repository.getPlayerStateSync()
-                        
-                        // The difference accumulated over this 1-second window:
-                        val deltaCurrent = (currentDouble - lastState.currentClicks.toDouble()).coerceAtLeast(0.0)
-                        val deltaTotal = (totalDouble - lastState.totalClicks.toDouble()).coerceAtLeast(0.0)
-
-                        if (deltaCurrent >= 1.0 || deltaTotal >= 1.0) {
-                            val nextTotal = stateBeforeCommit.totalClicks + deltaTotal.toLong()
-                            val nextCurrent = stateBeforeCommit.currentClicks + deltaCurrent.toLong()
-
-                            updateStateAndCheckMilestones(stateBeforeCommit, nextTotal, nextCurrent)
-
-                            lastState = repository.getPlayerStateSync()
-                            currentDouble = lastState.currentClicks.toDouble()
-                            totalDouble = lastState.totalClicks.toDouble()
-                        }
-                    }
-                } else {
-                    if (accumulatedTicksTime >= 1000) {
-                        accumulatedTicksTime = 0
-                        val freshState = repository.getPlayerStateSync()
-                        lastState = freshState
-                        currentDouble = freshState.currentClicks.toDouble()
-                        totalDouble = freshState.totalClicks.toDouble()
-                        _liveClicks.value = freshState.currentClicks
-                    }
-                }
+                _liveClicks.value = nextCurrent
+                
+                // Advance evolution tiers dynamically in local memory as counts ticking
+                val currentLevel = calculateLevelForClicks(nextTotal)
+                val updated = state.copy(
+                    currentClicks = nextCurrent,
+                    totalClicks = nextTotal,
+                    currentLevel = currentLevel
+                )
+                _playerStateMem.value = updated
+                isSavePending = true
             }
+        }
+    }
+
+    private fun calculateLevelForClicks(clicks: Long): Int {
+        return when {
+            clicks >= 200000000000L -> 15 // Mythical Unicorn
+            clicks >= 40000000000L -> 14  // Ancient T-Rex
+            clicks >= 8000000000L -> 13   // Soaring Eagle
+            clicks >= 1500000000L -> 12  // Giant Whale
+            clicks >= 300000000L -> 11   // Fearsome Tiger
+            clicks >= 60000000L -> 10    // Friendly Panda
+            clicks >= 12000000L -> 9     // Majestic Lion
+            clicks >= 2500000L -> 8      // Clever Fox
+            clicks >= 500000L -> 7       // Colorful Parrot
+            clicks >= 100000L -> 6       // Tiny Turtle
+            clicks >= 25000L -> 5        // Cheeky Monkey
+            clicks >= 5000L -> 4         // Fluffy Bunny
+            clicks >= 1000L -> 3         // Loyal Doggy
+            clicks >= 200L -> 2          // Playful Kitty
+            else -> 1                    // Cute Hamster
         }
     }
 
@@ -389,7 +435,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         while (true) {
             delay(2500) // update competitor progress every 2.5 seconds
             val currentLeaderboard = repository.getLeaderboardSync()
-            val state = repository.getPlayerStateSync()
+            val state = _playerStateMem.value ?: continue
             val userTotal = state.totalClicks
 
             val updatedList = currentLeaderboard.map { entry ->
@@ -397,10 +443,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     val emoji = getAnimalEmoji(state.currentLevel)
                     entry.copy(clicks = userTotal, avatarEmoji = emoji, clicksPerSecond = calculateCPS(state))
                 } else {
-                    // Competitors advance randomly based on their clicksPerSecond
                     val fluctuationMultiplier = Random.nextDouble(0.5, 1.5)
                     val addedClicks = (entry.clicksPerSecond * 2.5 * fluctuationMultiplier).roundToLong()
-                    // ensure a minimum of 1 click occasionally or keep it simple
                     val finalAdd = if (addedClicks <= 0 && Random.nextFloat() < 0.25) 1L else addedClicks
                     entry.copy(clicks = entry.clicks + finalAdd)
                 }
@@ -409,23 +453,35 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun getAnimalTierName(level: Int): String {
+        return when (level) {
+            in 1..4 -> "COMMON Tier"
+            in 5..7 -> "UNCOMMON Tier"
+            in 8..10 -> "RARE Tier"
+            in 11..12 -> "EPIC Tier"
+            in 13..14 -> "LEGENDARY Tier"
+            15 -> "MYTHIC Overwhelming Mastery"
+            else -> "Tier Unknown"
+        }
+    }
+
     fun getAnimalNameForLevel(level: Int): String {
         return when (level) {
             1 -> "Cute Hamster"
             2 -> "Playful Kitty"
-            3 -> "Alert Doggy"
+            3 -> "Loyal Doggy"
             4 -> "Fluffy Bunny"
             5 -> "Cheeky Monkey"
             6 -> "Tiny Turtle"
             7 -> "Colorful Parrot"
-            8 -> "Majestic Lion"
-            9 -> "Celestial Dragon"
-            10 -> "Mystic Phoenix"
-            11 -> "Cosmic Behemoth"
-            12 -> "Chrono Leviathan"
-            13 -> "Galaxian Overlord"
-            14 -> "Infinite Singularity"
-            15 -> "Supreme Omnipresent"
+            8 -> "Clever Fox"
+            9 -> "Majestic Lion"
+            10 -> "Friendly Panda"
+            11 -> "Fearsome Tiger"
+            12 -> "Giant Whale"
+            13 -> "Soaring Eagle"
+            14 -> "Ancient T-Rex"
+            15 -> "Mythical Unicorn"
             else -> "Special Animal"
         }
     }
@@ -439,14 +495,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             5 -> "🐵"
             6 -> "🐢"
             7 -> "🦜"
-            8 -> "🦁"
-            9 -> "🐲"
-            10 -> "🦅"
-            11 -> "🌌"
+            8 -> "🦊"
+            9 -> "🦁"
+            10 -> "🐼"
+            11 -> "🐯"
             12 -> "🐋"
-            13 -> "👾"
-            14 -> "🌀"
-            15 -> "🌟"
+            13 -> "🦅"
+            14 -> "🦖"
+            15 -> "🦄"
             else -> "🐾"
         }
     }
@@ -462,7 +518,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             "retro" -> "8-Bit Retro"
             "shadow" -> "Shadow Ninja"
             "royal" -> "Royal Crown"
+            "lava_fire" -> "Volcanic Fury"
             "cosmic" -> "Cosmic Nebula"
+            "neon_cyber" -> "Hyper Grid"
+            "magic_aurora" -> "Elven Aurora"
             else -> "Mysterious Look"
         }
     }
@@ -478,7 +537,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             "retro" -> 150000
             "shadow" -> 500000
             "royal" -> 2000000
+            "lava_fire" -> 5000000
             "cosmic" -> 10000000
+            "neon_cyber" -> 100000000
+            "magic_aurora" -> 1000000000
             else -> 0
         }
     }

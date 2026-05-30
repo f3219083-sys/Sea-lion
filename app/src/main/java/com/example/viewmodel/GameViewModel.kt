@@ -56,6 +56,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val playTabPressCount = MutableStateFlow(0)
     private val clickTimestamps = mutableListOf<Long>()
 
+    // Doubling ban states
+    val autoclickerOffenses = MutableStateFlow(0)
+    val autoclickerBanTimeRemaining = MutableStateFlow(0L) // active countdown in seconds
+    val isAutoclickerProtectionDisabled = MutableStateFlow(false)
+    val shopTabPressCount = MutableStateFlow(0)
+
     private var isSavePending = false
 
     init {
@@ -167,18 +173,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun onAnimalClicked() {
         if (isClickerLocked.value) return
 
-        val now = System.currentTimeMillis()
-        synchronized(clickTimestamps) {
-            clickTimestamps.add(now)
-            if (clickTimestamps.size > 12) {
-                clickTimestamps.removeAt(0)
-            }
-            if (clickTimestamps.size >= 12) {
-                val timeSpan = now - clickTimestamps[0]
-                // 12 taps in less than 500ms means >24 CPS, physically impossible for human fingers
-                if (timeSpan < 500) {
-                    triggerAutoclickerPenalty()
-                    return
+        if (!isAutoclickerProtectionDisabled.value) {
+            val now = System.currentTimeMillis()
+            synchronized(clickTimestamps) {
+                clickTimestamps.add(now)
+                if (clickTimestamps.size > 12) {
+                    clickTimestamps.removeAt(0)
+                }
+                if (clickTimestamps.size >= 12) {
+                    val timeSpan = now - clickTimestamps[0]
+                    // 12 taps in less than 500ms means >24 CPS, physically impossible for human fingers
+                    if (timeSpan < 500) {
+                        triggerAutoclickerPenalty()
+                        return
+                    }
                 }
             }
         }
@@ -196,9 +204,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var banTimerJob: kotlinx.coroutines.Job? = null
+
     private fun triggerAutoclickerPenalty() {
+        if (isAutoclickerProtectionDisabled.value) return
+
+        val newOffenseCount = autoclickerOffenses.value + 1
+        autoclickerOffenses.value = newOffenseCount
+
+        // 1st offense = 1 min (60s), 2nd = 2 mins (120s), 3rd = 4 mins (240s)...
+        val banMinutes = 2.0.pow(newOffenseCount - 1).toLong()
+        val banSeconds = banMinutes * 60L
+
+        autoclickerBanTimeRemaining.value = banSeconds
         isClickerLocked.value = true
         playTabPressCount.value = 0
+
         viewModelScope.launch {
             val currentState = _playerStateMem.value ?: return@launch
             
@@ -223,11 +244,32 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             isSavePending = true
             
             repository.updatePlayerState(updated) // Save penalty to DB immediately
-            _uiEvents.emit(GameUiEvent.GeneralError("Ανιχνεύτηκε Auto Clicker! Ποινή: -1,000 κλικ. Πιέστε το κουμπί 'Play' 10 φορές για ξεκλείδωμα!"))
+            _uiEvents.emit(GameUiEvent.GeneralError("Ανιχνεύτηκε Auto Clicker! Ποινή: -1,000 κλικ. Προσωρινός αποκλεισμός για $banMinutes λεπτά!"))
+        }
+
+        // Start real-time countdown timer tick loop
+        banTimerJob?.cancel()
+        banTimerJob = viewModelScope.launch {
+            while (autoclickerBanTimeRemaining.value > 0) {
+                delay(1000)
+                if (isAutoclickerProtectionDisabled.value) {
+                    autoclickerBanTimeRemaining.value = 0
+                    isClickerLocked.value = false
+                    break
+                }
+                autoclickerBanTimeRemaining.value = autoclickerBanTimeRemaining.value - 1
+            }
+            if (!isAutoclickerProtectionDisabled.value) {
+                isClickerLocked.value = false
+                synchronized(clickTimestamps) {
+                    clickTimestamps.clear()
+                }
+                _uiEvents.emit(GameUiEvent.GeneralError("Ο αποκλεισμός έληξε! Το παιχνίδι ξεκλειδώθηκε. Παρακαλώ παίξτε καθαρά!"))
+            }
         }
     }
 
-    // Increments bottom navigation tab clicks to bypass the penalty warning
+    // Increments bottom navigation tab clicks to bypass the penalty warning (retained legacy support for safety)
     fun incrementPlayTabPress() {
         if (!isClickerLocked.value) return
         val nextVal = playTabPressCount.value + 1
@@ -240,6 +282,23 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
             viewModelScope.launch {
                 _uiEvents.emit(GameUiEvent.GeneralError("Το παιχνίδι ξεκλειδώθηκε με επιτυχία! Παρακαλώ παίξτε καθαρά!"))
+            }
+        }
+    }
+
+    // Increments shop tab clicks, if clicked 10 times disables security
+    fun incrementShopTabPress() {
+        val nextVal = shopTabPressCount.value + 1
+        shopTabPressCount.value = nextVal
+        if (nextVal >= 10) {
+            isAutoclickerProtectionDisabled.value = true
+            isClickerLocked.value = false
+            autoclickerBanTimeRemaining.value = 0L
+            synchronized(clickTimestamps) {
+                clickTimestamps.clear()
+            }
+            viewModelScope.launch {
+                _uiEvents.emit(GameUiEvent.GeneralError("⚠️ Η ασφάλεια για το Auto Clicker έχει απενεργοποιηθεί επιτυχώς!"))
             }
         }
     }

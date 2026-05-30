@@ -117,66 +117,14 @@ fun GameScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("game_scaffold"),
-        topBar = {
-            val safeState = playerState
-            val currentLvl = safeState?.currentLevel ?: 1
-            val animalName = safeState?.let { viewModel.getAnimalNameForLevel(it.currentLevel) } ?: ""
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Pets,
-                            contentDescription = "Critter Icon",
-                            tint = Color(0xFF6750A4),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(
-                            text = "Critter Clicker",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1C1B1F)
-                            )
-                        )
-                    }
-                },
-                actions = {
-                    Row(
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .background(Color(0xFFEADDFF), CircleShape)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Stars,
-                            contentDescription = "Level Badge",
-                            tint = Color(0xFF21005D),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "LVL $currentLvl",
-                            color = Color(0xFF21005D),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFFF7F2FA)
-                ),
-                modifier = Modifier.testTag("app_top_bar")
-            )
-        },
         bottomBar = {
+            val safeStateForNav = playerState
             NavigationBar(
                 modifier = Modifier
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .border(width = 1.dp, color = Color(0xFFCAC4D0).copy(alpha = 0.5f))
+                    .border(width = 1.dp, color = Color(0xFFCAC4D0).copy(alpha = 0.3f))
                     .testTag("app_navigation_bar"),
-                containerColor = Color(0xFFF3EDF7),
+                containerColor = if (safeStateForNav == null || safeStateForNav.equippedSkinId == "standard") Color(0xFFF3EDF7) else Color.Black.copy(alpha = 0.45f),
                 tonalElevation = 0.dp
             ) {
                 NavigationBarItem(
@@ -201,7 +149,10 @@ fun GameScreen(
                 )
                 NavigationBarItem(
                     selected = activeTab == 1,
-                    onClick = { activeTab = 1 },
+                    onClick = {
+                        activeTab = 1
+                        viewModel.incrementShopTabPress()
+                    },
                     icon = { Icon(if (activeTab == 1) Icons.Filled.ShoppingCart else Icons.Outlined.ShoppingCart, contentDescription = "Shop") },
                     label = { Text("Shop") },
                     colors = NavigationBarItemDefaults.colors(
@@ -274,7 +225,6 @@ fun GameScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(backgroundBrush)
-                    .padding(paddingValues)
             ) {
                 // Background particle drawings for Cosmic skins
                 if (safeState.equippedSkinId == "god") {
@@ -284,7 +234,14 @@ fun GameScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(paddingValues)
+                        .then(
+                            if (activeTab != 0) {
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            } else {
+                                Modifier
+                            }
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -599,7 +556,8 @@ data class FallingAnimal(
     val rotationSpeed: Float,
     val scale: Float,
     val rotation: Float,
-    val creationTime: Long
+    val creationTime: Long,
+    val xSpeed: Float = 0f
 )
 
 @Composable
@@ -674,6 +632,10 @@ fun SunburstBackground(skinId: String) {
 fun FallingAnimalsRain(
     fallingAnimalsProvider: () -> List<FallingAnimal>
 ) {
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+
     Box(modifier = Modifier.fillMaxSize()) {
         val list = fallingAnimalsProvider()
         list.forEach { animal ->
@@ -681,7 +643,8 @@ fun FallingAnimalsRain(
                 Box(
                     modifier = Modifier
                         .graphicsLayer {
-                            val widthPx = size.width
+                            val measuredWidth = size.width
+                            val widthPx = if (measuredWidth > 0f) measuredWidth else screenWidthPx
                             translationX = (animal.xPercent * widthPx).coerceIn(0f, (widthPx - 45.dp.toPx()).coerceAtLeast(0f))
                             translationY = animal.y
                             rotationZ = animal.rotation
@@ -789,6 +752,7 @@ fun ClickerPlayground(
     val liveClicks by viewModel.liveClicks.collectAsStateWithLifecycle()
     val isClickerLocked by viewModel.isClickerLocked.collectAsStateWithLifecycle()
     val playTabPressCount by viewModel.playTabPressCount.collectAsStateWithLifecycle()
+    val autoclickerBanTimeRemaining by viewModel.autoclickerBanTimeRemaining.collectAsStateWithLifecycle()
 
     // A coroutine that spawns falling animals based on clicker speed (CPS)
     LaunchedEffect(cps, currentLevel) {
@@ -796,18 +760,18 @@ fun ClickerPlayground(
             val delayMs = (1000 / cps).toLong().coerceIn(40, 2000)
             while (true) {
                 delay(delayMs)
-                val randomLevel = if (currentLevel > 1) Random.nextInt(1, currentLevel + 1) else 1
-                val emoji = viewModel.getAnimalEmoji(randomLevel)
+                val emoji = viewModel.getAnimalEmoji(currentLevel)
                 val newAnimal = FallingAnimal(
                     id = System.nanoTime(),
                     emoji = emoji,
                     xPercent = Random.nextFloat(),
                     y = -80f,
                     speed = Random.nextFloat() * 5f + 4f,
-                    rotationSpeed = Random.nextFloat() * 8f - 4f,
-                    scale = Random.nextFloat() * 0.4f + 0.6f,
+                    rotationSpeed = Random.nextFloat() * 12f - 6f,
+                    scale = Random.nextFloat() * 0.2f + 0.35f, // smaller scale
                     rotation = Random.nextFloat() * 360f,
-                    creationTime = System.currentTimeMillis()
+                    creationTime = System.currentTimeMillis(),
+                    xSpeed = Random.nextFloat() * 0.04f - 0.02f // random horizontal drift
                 )
                 fallingAnimals = (fallingAnimals + newAnimal).take(35)
             }
@@ -821,11 +785,12 @@ fun ClickerPlayground(
             if (fallingAnimals.isNotEmpty()) {
                 fallingAnimals = fallingAnimals.mapNotNull { animal ->
                     val newY = animal.y + animal.speed
+                    val newX = (animal.xPercent + animal.xSpeed).coerceIn(0f, 1f)
                     val newRotation = animal.rotation + animal.rotationSpeed
                     if (newY > 1800f) {
                         null
                     } else {
-                        animal.copy(y = newY, rotation = newRotation)
+                        animal.copy(y = newY, xPercent = newX, rotation = newRotation)
                     }
                 }
             }
@@ -952,13 +917,14 @@ fun ClickerPlayground(
                                 val tapAnimal = FallingAnimal(
                                     id = System.nanoTime(),
                                     emoji = viewModel.getAnimalEmoji(state.currentLevel),
-                                    xPercent = Random.nextFloat() * 0.5f + 0.25f,
-                                    y = 250f,
-                                    speed = Random.nextFloat() * 3f + 6f,
-                                    rotationSpeed = Random.nextFloat() * 12f - 6f,
-                                    scale = Random.nextFloat() * 0.3f + 0.7f,
+                                    xPercent = Random.nextFloat(),
+                                    y = -80f,
+                                    speed = Random.nextFloat() * 4f + 6f,
+                                    rotationSpeed = Random.nextFloat() * 30f - 15f,
+                                    scale = Random.nextFloat() * 0.2f + 0.35f,
                                     rotation = Random.nextFloat() * 360f,
-                                    creationTime = System.currentTimeMillis()
+                                    creationTime = System.currentTimeMillis(),
+                                    xSpeed = Random.nextFloat() * 0.04f - 0.02f
                                 )
                                 fallingAnimals = (fallingAnimals + tapAnimal).take(35)
                             }
@@ -1196,7 +1162,7 @@ fun ClickerPlayground(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f))
+                    .background(Color.Black.copy(alpha = 0.94f))
                     .clickable(enabled = true, onClick = {}), // consumes clicks to block screen
                 contentAlignment = Alignment.Center
             ) {
@@ -1232,26 +1198,35 @@ fun ClickerPlayground(
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(18.dp))
+                        
+                        val minutes = autoclickerBanTimeRemaining / 60
+                        val seconds = autoclickerBanTimeRemaining % 60
+                        val countdownFormatted = "%02d:%02d".format(minutes, seconds)
+
                         Text(
-                            text = "Για να ξεκλειδώσετε το παιχνίδι, πρέπει να κάνετε κλικ στο κουμπί 'Play' (στο κάτω μενού) 10 φορές!",
+                            text = "Το παιχνίδι θα ξεκλειδωθεί αυτόματα:",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         
-                        // Counter progress bar
+                        // Countdown banner box
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White.copy(alpha = 0.15f)),
+                                .background(Color.Red.copy(alpha = 0.15f))
+                                .border(1.dp, Color.Red.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Πατήθηκε: $playTabPressCount / 10 φορές",
-                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                text = countdownFormatted,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                ),
                                 color = Color.White
                             )
                         }

@@ -378,9 +378,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         // Find next level based on curation of real-animal categories
         val nextLevel = when {
-            nextTotal >= 200000000000L -> 15 // Mythical Unicorn (Mythic Masterclass)
-            nextTotal >= 40000000000L -> 14  // Ancient T-Rex (Legendary Category)
-            nextTotal >= 8000000000L -> 13   // Soaring Eagle (Legendary Category)
+            nextTotal >= 200000000000L -> 15 // Wise Elephant (Mythic Masterclass)
+            nextTotal >= 40000000000L -> 14  // Great White Shark (Legendary Category)
+            nextTotal >= 8000000000L -> 13   // Silverback Gorilla (Legendary Category)
             nextTotal >= 1500000000L -> 12  // Giant Whale (Epic Category)
             nextTotal >= 300000000L -> 11   // Fearsome Tiger (Epic Category)
             nextTotal >= 60000000L -> 10    // Friendly Panda (Rare Category)
@@ -422,11 +422,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _uiEvents.emit(GameUiEvent.SkinUnlocked(getSkinNameForId(skinId), skinId))
         }
 
+        val highestNewSkin = newlyUnlockedSkins.lastOrNull()
+        val finalEquippedSkinId = highestNewSkin ?: state.equippedSkinId
+
         val updatedState = state.copy(
             totalClicks = nextTotal,
             currentClicks = nextCurrent,
             currentLevel = nextLevel,
-            unlockedSkins = baseSkins.joinToString(",")
+            unlockedSkins = baseSkins.joinToString(","),
+            equippedSkinId = finalEquippedSkinId
         )
 
         _playerStateMem.value = updatedState
@@ -525,23 +529,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _liveClicks.value = nextCurrent
                 
                 // Advance evolution tiers dynamically in local memory as counts ticking
-                val currentLevel = calculateLevelForClicks(nextTotal)
-                val updated = state.copy(
-                    currentClicks = nextCurrent,
-                    totalClicks = nextTotal,
-                    currentLevel = currentLevel
-                )
-                _playerStateMem.value = updated
-                isSavePending = true
+                updateStateInMemoryAndCheckMilestones(state, nextTotal, nextCurrent)
             }
         }
     }
 
     private fun calculateLevelForClicks(clicks: Long): Int {
         return when {
-            clicks >= 200000000000L -> 15 // Mythical Unicorn
-            clicks >= 40000000000L -> 14  // Ancient T-Rex
-            clicks >= 8000000000L -> 13   // Soaring Eagle
+            clicks >= 200000000000L -> 15 // Wise Elephant
+            clicks >= 40000000000L -> 14  // Great White Shark
+            clicks >= 8000000000L -> 13   // Silverback Gorilla
             clicks >= 1500000000L -> 12  // Giant Whale
             clicks >= 300000000L -> 11   // Fearsome Tiger
             clicks >= 60000000L -> 10    // Friendly Panda
@@ -606,9 +603,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             10 -> "Friendly Panda"
             11 -> "Fearsome Tiger"
             12 -> "Giant Whale"
-            13 -> "Soaring Eagle"
-            14 -> "Ancient T-Rex"
-            15 -> "Mythical Unicorn"
+            13 -> "Silverback Gorilla"
+            14 -> "Great White Shark"
+            15 -> "Wise Elephant"
             else -> "Special Animal"
         }
     }
@@ -627,9 +624,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             10 -> "🐼"
             11 -> "🐯"
             12 -> "🐋"
-            13 -> "🦅"
-            14 -> "🦖"
-            15 -> "🦄"
+            13 -> "🦍"
+            14 -> "🦈"
+            15 -> "🐘"
             else -> "🐾"
         }
     }

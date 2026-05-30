@@ -451,177 +451,70 @@ fun StatsHeaderWidget(
     activeTab: Int,
     viewModel: GameViewModel
 ) {
-    val nextLevelTarget = when (currentLevel) {
-        1 -> 200L
-        2 -> 1000L
-        3 -> 5000L
-        4 -> 25000L
-        5 -> 100000L
-        6 -> 500000L
-        7 -> 2500000L
-        8 -> 12000000L
-        9 -> 60000000L
-        else -> -1L
-    }
-
-    val isDarkBackground = skinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "cosmic") || activeTab == 0
-    val cardBg = if (isDarkBackground) Color.Black.copy(alpha = 0.45f) else Color(0xFFF7F2FA).copy(alpha = 0.95f)
-    val cardBorder = if (isDarkBackground) Color.White.copy(alpha = 0.2f) else Color(0xFFCAC4D0).copy(alpha = 0.6f)
-    val labelColor = if (isDarkBackground) Color.White.copy(alpha = 0.7f) else Color(0xFF49454F)
-    val valueColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
-    val primaryColor = if (isDarkBackground) Color(0xFFFFD700) else Color(0xFF6750A4)
-    val secondaryColor = if (isDarkBackground) Color(0xFFEADDFF) else Color(0xFF21005D)
+    val isDarkBackground = skinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora") || skinId == ""
+    val titleColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
 
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
+            .border(
+                1.dp,
+                if (isDarkBackground) Color.White.copy(alpha = 0.2f) else Color(0xFFCAC4D0).copy(alpha = 0.6f),
+                RoundedCornerShape(16.dp)
+            )
             .testTag("stats_header_card"),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = cardBg
-        ),
-        shape = RoundedCornerShape(20.dp)
+            containerColor = if (isDarkBackground) Color.Black.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.9f)
+        )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Text(
+                text = viewModel.getAnimalTierName(currentLevel).uppercase(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isDarkBackground) Color(0xFFFFD700) else Color(0xFF6750A4),
+                    letterSpacing = 1.5.sp
+                )
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "🐾 $liveClicksValue",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.Black,
+                    fontSize = 36.sp,
+                    color = titleColor,
+                    shadow = Shadow(Color.Black.copy(alpha = 0.2f), blurRadius = 3f)
+                ),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("clicks_display")
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "${viewModel.getAnimalEmoji(currentLevel)} Level $currentLevel: ${viewModel.getAnimalNameForLevel(currentLevel)}",
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = titleColor.copy(alpha = 0.9f)
+                )
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(if (isDarkBackground) Color.White.copy(alpha = 0.12f) else Color(0x1F6750A4))
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "TOTAL CLICKS",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = labelColor,
-                            letterSpacing = 1.3.sp
-                        )
+                Text(
+                    text = "⚡ Automatics: %.1f/sec".format(cps),
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (isDarkBackground) Color.White else Color(0xFF21005D)
                     )
-                    Text(
-                        text = "🐾 $liveClicksValue",
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontWeight = FontWeight.Black,
-                            color = valueColor,
-                            shadow = Shadow(
-                                color = Color.Black.copy(alpha = 0.1f),
-                                offset = Offset(1f, 3f),
-                                blurRadius = 4f
-                            )
-                        ),
-                        modifier = Modifier.testTag("clicks_display")
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "AUTO-CLICKS / SEC",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = labelColor,
-                            letterSpacing = 1.3.sp
-                        )
-                    )
-                    Text(
-                        text = "⚡ %.1f clicks".format(cps),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = primaryColor
-                        )
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Progress bar to next Level
-            if (nextLevelTarget != -1L) {
-                val previousLevelThreshold = when (currentLevel) {
-                    1 -> 0L
-                    2 -> 200L
-                    3 -> 1000L
-                    4 -> 5000L
-                    5 -> 25000L
-                    6 -> 100000L
-                    7 -> 500000L
-                    8 -> 2500000L
-                    9 -> 12000000L
-                    else -> 0L
-                }
-                val levelProgressClicks = totalClicksValue - previousLevelThreshold
-                val levelRequiredClicks = nextLevelTarget - previousLevelThreshold
-                val fraction = (levelProgressClicks.toFloat() / levelRequiredClicks).coerceIn(0f, 1f)
-
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${viewModel.getAnimalNameForLevel(currentLevel).uppercase()} GUARDIAN",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = labelColor,
-                                letterSpacing = 1.sp
-                            )
-                        )
-                        Text(
-                            text = "$totalClicksValue / $nextLevelTarget XP",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = labelColor
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    LinearProgressIndicator(
-                        progress = { fraction },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(12.dp)
-                            .clip(CircleShape),
-                        color = primaryColor,
-                        trackColor = if (isDarkBackground) Color.White.copy(alpha = 0.2f) else Color(0xFFE6E1E5)
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        text = "$totalClicksValue / $nextLevelTarget total clicks",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = labelColor.copy(alpha = 0.6f),
-                            fontFamily = FontFamily.Monospace
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.End
-                    )
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.WorkspacePremium,
-                        contentDescription = "Max",
-                        tint = Color(0xFFFFD700),
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "MAX LEVEL REACHED 👑 Infinite Singularity!",
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFD700)
-                        )
-                    )
-                }
+                )
             }
         }
     }
@@ -723,9 +616,7 @@ fun FallingAnimalsRain(
                 Box(
                     modifier = Modifier
                         .graphicsLayer {
-                            val measuredWidth = size.width
-                            val widthPx = if (measuredWidth > 0f) measuredWidth else screenWidthPx
-                            translationX = (animal.xPercent * widthPx).coerceIn(0f, (widthPx - 45.dp.toPx()).coerceAtLeast(0f))
+                            translationX = (animal.xPercent * screenWidthPx).coerceIn(0f, (screenWidthPx - 45.dp.toPx()).coerceAtLeast(0f))
                             translationY = animal.y
                             rotationZ = animal.rotation
                             scaleX = animal.scale
@@ -1311,80 +1202,92 @@ fun ShopUpgradesPanel(
     state: PlayerState,
     viewModel: GameViewModel
 ) {
-    val itemsList = listOf(
-        ShopItemData(
-            id = "click_power",
-            title = "👉 Heavy Paws (Tap Up 1)",
-            description = "Increases clicks gained per tap manually. Strengthens on high Level.",
-            multiplierLabel = "+1 Clicks/Tap",
-            baseCost = 15,
-            currentCount = state.clickPowerLevel
-        ),
-        ShopItemData(
-            id = "hamster_wheel",
-            title = "🐹 Hamster Wheel (CPS Up 1)",
-            description = "Auto-click helper. Simple but stable running speed.",
-            multiplierLabel = "+0.5 Clicks/sec",
-            baseCost = 50,
-            currentCount = state.hamsterWheelCount
-        ),
-        ShopItemData(
-            id = "cat_scratch",
-            title = "😼 Cat Scratch (Tap Up 2)",
-            description = "Harness razor-sharp feline motivation to increase Tap power.",
-            multiplierLabel = "+5 Clicks/Tap",
-            baseCost = 250,
-            currentCount = state.catScratchCount
-        ),
-        ShopItemData(
-            id = "dog_bone",
-            title = "🍖 Dog Bone (CPS Up 2)",
-            description = "Unleash persistent puppy energy for big click speeds.",
-            multiplierLabel = "+20.0 Clicks/sec",
-            baseCost = 1200,
-            currentCount = state.dogBoneCount
-        ),
-        ShopItemData(
-            id = "dragon_flame",
-            title = "🔥 Dragon Flame (Tap Up 3)",
-            description = "Summon ancient dragon energy for ultimate manual Tap power.",
-            multiplierLabel = "+50 Clicks/Tap",
-            baseCost = 6000,
-            currentCount = state.dragonFlameCount
-        ),
-        ShopItemData(
-            id = "elephant_stampede",
-            title = "🐘 Elephant Stampede (CPS Up 3)",
-            description = "An incredibly heavy and rhythmic stomping machine helper.",
-            multiplierLabel = "+200.0 Clicks/sec",
-            baseCost = 35000,
-            currentCount = state.elephantStampedeCount
-        ),
-        ShopItemData(
-            id = "cheetah_nitro",
-            title = "🐆 Cheetah Speed (Tap Up 4)",
-            description = "Super-charged feline velocity for rapid boost on Tap.",
-            multiplierLabel = "+1000 Clicks/Tap",
-            baseCost = 200000,
-            currentCount = state.cheetahNitroCount
-        ),
-        ShopItemData(
-            id = "phoenix_flight",
-            title = "🦅 Phoenix Flight (CPS Up 4)",
-            description = "Regenerative cosmic heat loops automatically click.",
-            multiplierLabel = "+5000.0 Clicks/sec",
-            baseCost = 1500000,
-            currentCount = state.phoenixFlightCount
-        ),
-        ShopItemData(
-            id = "black_hole",
-            title = "🕳️ Singularity (Tap Up 5)",
-            description = "A powerful spatial warp that boosts manual clicks heavily.",
-            multiplierLabel = "+30000 Clicks/Tap",
-            baseCost = 12000000,
-            currentCount = state.blackHoleCount
+    val itemsList = remember(
+        state.clickPowerLevel,
+        state.hamsterWheelCount,
+        state.catScratchCount,
+        state.dogBoneCount,
+        state.dragonFlameCount,
+        state.elephantStampedeCount,
+        state.cheetahNitroCount,
+        state.phoenixFlightCount,
+        state.blackHoleCount
+    ) {
+        listOf(
+            ShopItemData(
+                id = "click_power",
+                title = "👉 Heavy Paws (Tap Up 1)",
+                description = "Increases clicks gained per tap manually. Strengthens on high Level.",
+                multiplierLabel = "+1 Clicks/Tap",
+                baseCost = 15,
+                currentCount = state.clickPowerLevel
+            ),
+            ShopItemData(
+                id = "hamster_wheel",
+                title = "🐹 Hamster Wheel (CPS Up 1)",
+                description = "Auto-click helper. Simple but stable running speed.",
+                multiplierLabel = "+0.5 Clicks/sec",
+                baseCost = 50,
+                currentCount = state.hamsterWheelCount
+            ),
+            ShopItemData(
+                id = "cat_scratch",
+                title = "😼 Cat Scratch (Tap Up 2)",
+                description = "Harness razor-sharp feline motivation to increase Tap power.",
+                multiplierLabel = "+5 Clicks/Tap",
+                baseCost = 250,
+                currentCount = state.catScratchCount
+            ),
+            ShopItemData(
+                id = "dog_bone",
+                title = "🍖 Dog Bone (CPS Up 2)",
+                description = "Unleash persistent puppy energy for big click speeds.",
+                multiplierLabel = "+20.0 Clicks/sec",
+                baseCost = 1200,
+                currentCount = state.dogBoneCount
+            ),
+            ShopItemData(
+                id = "dragon_flame",
+                title = "🔥 Dragon Flame (Tap Up 3)",
+                description = "Summon ancient dragon energy for ultimate manual Tap power.",
+                multiplierLabel = "+50 Clicks/Tap",
+                baseCost = 6000,
+                currentCount = state.dragonFlameCount
+            ),
+            ShopItemData(
+                id = "elephant_stampede",
+                title = "🐘 Elephant Stampede (CPS Up 3)",
+                description = "An incredibly heavy and rhythmic stomping machine helper.",
+                multiplierLabel = "+200.0 Clicks/sec",
+                baseCost = 35000,
+                currentCount = state.elephantStampedeCount
+            ),
+            ShopItemData(
+                id = "cheetah_nitro",
+                title = "🐆 Cheetah Speed (Tap Up 4)",
+                description = "Super-charged feline velocity for rapid boost on Tap.",
+                multiplierLabel = "+1000 Clicks/Tap",
+                baseCost = 200000,
+                currentCount = state.cheetahNitroCount
+            ),
+            ShopItemData(
+                id = "phoenix_flight",
+                title = "🦅 Phoenix Flight (CPS Up 4)",
+                description = "Regenerative cosmic heat loops automatically click.",
+                multiplierLabel = "+5000.0 Clicks/sec",
+                baseCost = 1500000,
+                currentCount = state.phoenixFlightCount
+            ),
+            ShopItemData(
+                id = "black_hole",
+                title = "🕳️ Singularity (Tap Up 5)",
+                description = "A powerful spatial warp that boosts manual clicks heavily.",
+                multiplierLabel = "+30000 Clicks/Tap",
+                baseCost = 12000000,
+                currentCount = state.blackHoleCount
+            )
         )
-    )
+    }
 
     val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate")
     val titleTextColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
@@ -1586,23 +1489,27 @@ fun SkinsWardrobePanel(
     state: PlayerState,
     viewModel: GameViewModel
 ) {
-    val listSkins = listOf(
-        SkinData("standard", "Classic Cutie", "Classic appearance matching your animal level.", "🐹, 🐱, 🐶, 🐰, 🐵, 🐢...", 0, "🐾 Standard Power"),
-        SkinData("cyberpunk", "Cyber Neon", "Pulsating holographic frame and glowing overlays.", "⚡ Neon Accent", 200, "+2 Bonus Clicks per tap"),
-        SkinData("pirate", "Pirate Cap'n", "Ahoy! Equipped with a pirate hat and eyepatch details.", "🏴‍☠️ Pirate theme", 1000, "+5 Bonus Clicks per tap"),
-        SkinData("astronaut", "Space Astro", "Sleek astronaut cosmic suit with high-tech helmet.", "👨‍🚀 Space Helmet", 5000, "+15 Bonus Clicks per tap"),
-        SkinData("god", "Golden Divine", "Blinding divine light and legendary golden sun ray halo.", "👑 God rays halo", 25000, "+50 Bonus Clicks per tap"),
-        SkinData("steampunk", "Steam Brass", "Antique brass finish with rotating intricate golden gears.", "⚙️ Brass Gears", 50000, "+100 Bonus Clicks per tap"),
-        SkinData("retro", "8-Bit Retro", "Retro arcade monitor border with pixel green CRT glow.", "👾 Green Glow", 150000, "+250 Bonus Clicks per tap"),
-        SkinData("shadow", "Shadow Ninja", "Sleek crimson ninja mask wrapped in shadow dust.", "🥷 Stealth Dust", 500000, "+750 Bonus Clicks per tap"),
-        SkinData("royal", "Royal Crown", "Velvet royal purple frame seated with shimmering monarch crowns.", "👑 Velvet Crown", 2000000, "+2.5k Bonus Clicks per tap"),
-        SkinData("lava_fire", "Volcanic Fury", "Molten volcanic magma aura with crackling embers.", "🌋 Volcanic Aura", 5000000, "+5.0k Bonus Clicks per tap"),
-        SkinData("cosmic", "Cosmic Nebula", "A moving planetary outer orbit with glowing neon rings.", "🌌 Starry Rings", 10000000, "+10k Bonus Clicks per tap"),
-        SkinData("neon_cyber", "Hyper Grid", "A futuristic holographic computing grid with matrix coding.", "⚡ Hyper Grid", 100000000, "+50k Bonus Clicks per tap"),
-        SkinData("magic_aurora", "Elven Aurora", "Magical northern lights glowing with enchanted spell circles.", "🔮 Northern Glow", 1000000000, "+250k Bonus Clicks per tap")
-    )
+    val listSkins = remember {
+        listOf(
+            SkinData("standard", "Classic Cutie", "Classic appearance matching your animal level.", "🐹, 🐱, 🐶, 🐰, 🐵, 🐢...", 0, "🐾 Standard Power"),
+            SkinData("cyberpunk", "Cyber Neon", "Pulsating holographic frame and glowing overlays.", "⚡ Neon Accent", 200, "+2 Bonus Clicks per tap"),
+            SkinData("pirate", "Pirate Cap'n", "Ahoy! Equipped with a pirate hat and eyepatch details.", "🏴‍☠️ Pirate theme", 1000, "+5 Bonus Clicks per tap"),
+            SkinData("astronaut", "Space Astro", "Sleek astronaut cosmic suit with high-tech helmet.", "👨‍🚀 Space Helmet", 5000, "+15 Bonus Clicks per tap"),
+            SkinData("god", "Golden Divine", "Blinding divine light and legendary golden sun ray halo.", "👑 God rays halo", 25000, "+50 Bonus Clicks per tap"),
+            SkinData("steampunk", "Steam Brass", "Antique brass finish with rotating intricate golden gears.", "⚙️ Brass Gears", 50000, "+100 Bonus Clicks per tap"),
+            SkinData("retro", "8-Bit Retro", "Retro arcade monitor border with pixel green CRT glow.", "👾 Green Glow", 150000, "+250 Bonus Clicks per tap"),
+            SkinData("shadow", "Shadow Ninja", "Sleek crimson ninja mask wrapped in shadow dust.", "🥷 Stealth Dust", 500000, "+750 Bonus Clicks per tap"),
+            SkinData("royal", "Royal Crown", "Velvet royal purple frame seated with shimmering monarch crowns.", "👑 Velvet Crown", 2000000, "+2.5k Bonus Clicks per tap"),
+            SkinData("lava_fire", "Volcanic Fury", "Molten volcanic magma aura with crackling embers.", "🌋 Volcanic Aura", 5000000, "+5.0k Bonus Clicks per tap"),
+            SkinData("cosmic", "Cosmic Nebula", "A moving planetary outer orbit with glowing neon rings.", "🌌 Starry Rings", 10000000, "+10k Bonus Clicks per tap"),
+            SkinData("neon_cyber", "Hyper Grid", "A futuristic holographic computing grid with matrix coding.", "⚡ Hyper Grid", 100000000, "+50k Bonus Clicks per tap"),
+            SkinData("magic_aurora", "Elven Aurora", "Magical northern lights glowing with enchanted spell circles.", "🔮 Northern Glow", 1000000000, "+250k Bonus Clicks per tap")
+        )
+    }
 
-    val unlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
+    val unlockedList = remember(state.unlockedSkins) {
+        state.unlockedSkins.split(",").map { it.trim() }.toSet()
+    }
 
     val isDarkBackground = state.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora")
     val titleTextColor = if (isDarkBackground) Color.White else Color(0xFF1C1B1F)
@@ -1726,6 +1633,7 @@ fun SkinsWardrobePanel(
                                     containerColor = Color(0xFF6750A4),
                                     disabledContainerColor = if (isDarkBackground) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.12f)
                                 ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                 modifier = Modifier
                                     .testTag("equip_button_${skin.id}")
                                     .minimumInteractiveComponentSize(),
@@ -1733,7 +1641,13 @@ fun SkinsWardrobePanel(
                              ) {
                                 Text(
                                     text = if (isEquipped) "ACTIVE" else "EQUIP",
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.ExtraBold,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 11.sp,
+                                        letterSpacing = 0.5.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         } else {
@@ -1783,23 +1697,25 @@ fun UnlocksProgressionPanel(
     val currentLevel = state.currentLevel
     val totalClicks = state.totalClicks
 
-    val levelsList = listOf(
-        UnlockItem(1, "🐹", "Cute Hamster", 0L, "Standard starting hamster wheel buddy! No requirements."),
-        UnlockItem(2, "🐱", "Playful Kitty", 200L, "Quick and mischievous feline helper. Unlocks at 200 total clicks."),
-        UnlockItem(3, "🐶", "Alert Doggy", 1000L, "Loyal canine companion for increased tap multiplier. Unlocks at 1,000."),
-        UnlockItem(4, "🐰", "Fluffy Bunny", 5000L, "A soft hop-along bunny that doubles your tap effectiveness. Unlocks at 5,000."),
-        UnlockItem(5, "🐵", "Cheeky Monkey", 25000L, "A highly active monkey that loves to push keys for you. Unlocks at 25,000."),
-        UnlockItem(6, "🐢", "Tiny Turtle", 100000L, "A slow but extremely robust protector of multipliers. Unlocks at 100,000."),
-        UnlockItem(7, "🦜", "Colorful Parrot", 500000L, "A talkative bird repeating every tap exponentially. Unlocks at 500,000."),
-        UnlockItem(8, "🦁", "Majestic Lion", 2500000L, "King of the savanna, bringing ferocious power. Unlocks at 2,500,000."),
-        UnlockItem(9, "🐲", "Celestial Dragon", 12000000L, "An ancient sky-soaring beast with fire multiplier powers. Unlocks at 12,000,000."),
-        UnlockItem(10, "🦅", "Mystic Phoenix", 60000000L, "Regenerative divine avian bringing bright starlight boost. Unlocks at 60,000,000."),
-        UnlockItem(11, "🌌", "Cosmic Behemoth", 300000000L, "A spatial titan that warps your tapping coordinates. Unlocks at 300,000,000."),
-        UnlockItem(12, "🐋", "Chrono Leviathan", 1500000000L, "Ancient controller of oceanic current and frequency. Unlocks at 1,500,000,000."),
-        UnlockItem(13, "👾", "Galaxian Overlord", 8000000000L, "Extraterrestrial supreme chief bending cybernetic reality. Unlocks at 8,000,000,000."),
-        UnlockItem(14, "🌀", "Infinite Singularity", 40000000000L, "Ultimate core vortex that merges timing and clicking. Unlocks at 40,000,000,000."),
-        UnlockItem(15, "🌟", "Supreme Omnipresent", 200000000000L, "Absolute final form. Total mastery over clicking dimensions. Unlocks at 200,000,000,000.")
-    )
+    val levelsList = remember {
+        listOf(
+            UnlockItem(1, "🐹", "Cute Hamster", 0L, "Standard starting hamster wheel buddy! No requirements."),
+            UnlockItem(2, "🐱", "Playful Kitty", 200L, "Quick and mischievous feline helper. Unlocks at 200 total clicks."),
+            UnlockItem(3, "🐶", "Loyal Doggy", 1000L, "Loyal canine companion for increased tap multiplier. Unlocks at 1,000."),
+            UnlockItem(4, "🐰", "Fluffy Bunny", 5000L, "A soft hop-along bunny that doubles your tap effectiveness. Unlocks at 5,000."),
+            UnlockItem(5, "🐵", "Cheeky Monkey", 25000L, "A highly active monkey that loves to push keys for you. Unlocks at 25,000."),
+            UnlockItem(6, "🐢", "Tiny Turtle", 100000L, "A slow but extremely robust protector of multipliers. Unlocks at 100,000."),
+            UnlockItem(7, "🦜", "Colorful Parrot", 500000L, "A talkative bird repeating every tap exponentially. Unlocks at 500,000."),
+            UnlockItem(8, "🦊", "Clever Fox", 2500000L, "Clever and cunning fox multiplying click speed with intelligence. Unlocks at 2,500,000."),
+            UnlockItem(9, "🦁", "Majestic Lion", 12000000L, "King of the savanna bringing loud ferocious roars and absolute click authority. Unlocks at 12,000,000."),
+            UnlockItem(10, "🐼", "Friendly Panda", 60000000L, "A lovable soft panda bringing Zen focus and peaceful giant clicks. Unlocks at 60,000,000."),
+            UnlockItem(11, "🐯", "Fearsome Tiger", 300000000L, "A wild and fearsome tiger matching rapid strikes of the click engine. Unlocks at 300,000,000."),
+            UnlockItem(12, "🐋", "Giant Whale", 1500000000L, "A giant ocean titan singing majestic high frequency waves of auto-clicks. Unlocks at 1,500,000,000."),
+            UnlockItem(13, "🦍", "Silverback Gorilla", 8000000000L, "A powerful forest leader drumming immense clicks into existence. Unlocks at 8,000,000,000."),
+            UnlockItem(14, "🦈", "Great White Shark", 40000000000L, "Apex ocean tracker charging forward with massive biting click boosts. Unlocks at 40,000,000,000."),
+            UnlockItem(15, "🐘", "Wise Elephant", 200000000000L, "A majestic and extremely memory-rich titan with infinite click mastery. Unlocks at 200,000,000,000.")
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -2121,13 +2037,19 @@ fun CelebratingAlert(
                     onClick = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(14.dp)
+                        .height(44.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        "AWESOME! TAP TO CONTINUE",
+                        text = "AWESOME! TAP TO CONTINUE",
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.sp
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 11.sp,
+                            letterSpacing = 0.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
             }

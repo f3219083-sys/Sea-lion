@@ -78,8 +78,55 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.setupDefaultLeaderboardIfEmpty()
             val initial = repository.getPlayerStateSync()
-            _playerStateMem.value = initial
-            _liveClicks.value = initial.currentClicks
+            
+            val nowMs = System.currentTimeMillis()
+            var stateWithSavedTime = initial
+            
+            // Check if user is currently banned based on stored banExpirationTime in DB
+            if (initial.banExpirationTime > nowMs) {
+                val remSeconds = (initial.banExpirationTime - nowMs) / 1000L
+                viewModelScope.launch(Dispatchers.Main) {
+                    isClickerLocked.value = true
+                    autoclickerBanTimeRemaining.value = remSeconds
+                    autoclickerOffenses.value = initial.autoclickerOffenseCount
+                    startBanCountdownTimer(initial.banExpirationTime)
+                }
+            } else {
+                // Not banned or ban expired. Check offline clicks!
+                val cps = calculateCPS(initial)
+                if (initial.lastSavedTime > 0 && cps > 0) {
+                    val elapsedTimeSec = (nowMs - initial.lastSavedTime) / 1000L
+                    if (elapsedTimeSec >= 10) { // minimum 10 seconds of absence to count as offline progress
+                        val offlineClicksCollected = (elapsedTimeSec * cps).toLong()
+                        if (offlineClicksCollected > 0) {
+                            val nextCurrent = initial.currentClicks + offlineClicksCollected
+                            val nextTotal = initial.totalClicks + offlineClicksCollected
+                            val currentLevel = calculateLevelForClicks(nextTotal)
+                            stateWithSavedTime = initial.copy(
+                                currentClicks = nextCurrent,
+                                totalClicks = nextTotal,
+                                currentLevel = currentLevel,
+                                lastSavedTime = nowMs
+                            )
+                            isSavePending = true
+                            
+                            viewModelScope.launch(Dispatchers.Main) {
+                                _uiEvents.emit(GameUiEvent.GeneralError("Καλώς ήρθες πίσω! Κέρδισες $offlineClicksCollected κλικ (για ${elapsedTimeSec}δ απουσίας) όσο ήσουν εκτός! 🐾"))
+                                _liveClicks.value = nextCurrent
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Periodically refresh/set lastSavedTime
+            if (stateWithSavedTime.lastSavedTime == 0L || stateWithSavedTime.lastSavedTime < nowMs) {
+                stateWithSavedTime = stateWithSavedTime.copy(lastSavedTime = nowMs)
+                isSavePending = true
+            }
+
+            _playerStateMem.value = stateWithSavedTime
+            _liveClicks.value = stateWithSavedTime.currentClicks
 
             // Start clock loop for auto-clicking, AI, and saving updates
             launch { startAutoClickerLoop() }
@@ -94,8 +141,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             delay(1500)
             if (isSavePending) {
                 _playerStateMem.value?.let { state ->
-                    repository.updatePlayerState(state)
-                    syncUserWithLeaderboard(state)
+                    val updatedState = state.copy(lastSavedTime = System.currentTimeMillis())
+                    _playerStateMem.value = updatedState
+                    repository.updatePlayerState(updatedState)
+                    syncUserWithLeaderboard(updatedState)
                     isSavePending = false
                 }
             }
@@ -140,13 +189,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // Calculate current Clicks Per Second
     fun calculateCPS(state: PlayerState): Double {
         return (state.hamsterWheelCount * 0.5) +
-               (state.catScratchCount * 2.0) +
-               (state.dogBoneCount * 10.0) +
-               (state.dragonFlameCount * 50.0) +
+               (state.dogBoneCount * 20.0) +
                (state.elephantStampedeCount * 200.0) +
-               (state.cheetahNitroCount * 1000.0) +
-               (state.phoenixFlightCount * 5000.0) +
-               (state.blackHoleCount * 30000.0)
+               (state.phoenixFlightCount * 5000.0)
     }
 
     // Calculate clicks per tap - REMOVED Level multiplier to fulfill user's "what you upgrade is what you get" rule
@@ -166,7 +211,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             "magic_aurora" -> 250000
             else -> 0
         }
-        return (state.clickPowerLevel + skinBonus).toLong()
+        val tapFromUpgrades = state.clickPowerLevel.toLong() +
+                              (state.catScratchCount * 5L) +
+                              (state.dragonFlameCount * 50L) +
+                              (state.cheetahNitroCount * 1000L) +
+                              (state.blackHoleCount * 30000L)
+        return tapFromUpgrades + skinBonus
     }
 
     // Handles an user click
@@ -206,6 +256,39 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private var banTimerJob: kotlinx.coroutines.Job? = null
 
+    private fun startBanCountdownTimer(expirationMs: Long) {
+        banTimerJob?.cancel()
+        banTimerJob = viewModelScope.launch(Dispatchers.Main) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val remSeconds = ((expirationMs - now) / 1000L).coerceAtLeast(0L)
+                autoclickerBanTimeRemaining.value = remSeconds
+                
+                if (isAutoclickerProtectionDisabled.value || remSeconds <= 0L) {
+                    autoclickerBanTimeRemaining.value = 0L
+                    isClickerLocked.value = false
+                    
+                    // persist ban clear in db
+                    val current = _playerStateMem.value
+                    if (current != null) {
+                        val cleared = current.copy(banExpirationTime = 0)
+                        _playerStateMem.value = cleared
+                        repository.updatePlayerState(cleared)
+                    }
+                    
+                    synchronized(clickTimestamps) {
+                        clickTimestamps.clear()
+                    }
+                    if (!isAutoclickerProtectionDisabled.value) {
+                        _uiEvents.emit(GameUiEvent.GeneralError("Ο αποκλεισμός έληξε! Το παιχνίδι ξεκλειδώθηκε. Παρακαλώ παίξτε καθαρά!"))
+                    }
+                    break
+                }
+                delay(1000)
+            }
+        }
+    }
+
     private fun triggerAutoclickerPenalty() {
         if (isAutoclickerProtectionDisabled.value) return
 
@@ -215,6 +298,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // 1st offense = 1 min (60s), 2nd = 2 mins (120s), 3rd = 4 mins (240s)...
         val banMinutes = 2.0.pow(newOffenseCount - 1).toLong()
         val banSeconds = banMinutes * 60L
+        val banExpirationMs = System.currentTimeMillis() + (banSeconds * 1000L)
 
         autoclickerBanTimeRemaining.value = banSeconds
         isClickerLocked.value = true
@@ -238,34 +322,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _liveClicks.value = nextCurrent
             val updated = currentState.copy(
                 currentClicks = nextCurrent,
-                totalClicks = nextTotal
+                totalClicks = nextTotal,
+                banExpirationTime = banExpirationMs,
+                autoclickerOffenseCount = newOffenseCount
             )
             _playerStateMem.value = updated
             isSavePending = true
             
             repository.updatePlayerState(updated) // Save penalty to DB immediately
             _uiEvents.emit(GameUiEvent.GeneralError("Ανιχνεύτηκε Auto Clicker! Ποινή: -1,000 κλικ. Προσωρινός αποκλεισμός για $banMinutes λεπτά!"))
-        }
-
-        // Start real-time countdown timer tick loop
-        banTimerJob?.cancel()
-        banTimerJob = viewModelScope.launch {
-            while (autoclickerBanTimeRemaining.value > 0) {
-                delay(1000)
-                if (isAutoclickerProtectionDisabled.value) {
-                    autoclickerBanTimeRemaining.value = 0
-                    isClickerLocked.value = false
-                    break
-                }
-                autoclickerBanTimeRemaining.value = autoclickerBanTimeRemaining.value - 1
-            }
-            if (!isAutoclickerProtectionDisabled.value) {
-                isClickerLocked.value = false
-                synchronized(clickTimestamps) {
-                    clickTimestamps.clear()
-                }
-                _uiEvents.emit(GameUiEvent.GeneralError("Ο αποκλεισμός έληξε! Το παιχνίδι ξεκλειδώθηκε. Παρακαλώ παίξτε καθαρά!"))
-            }
+            
+            // Start real-time countdown timer tick loop
+            startBanCountdownTimer(banExpirationMs)
         }
     }
 

@@ -20,5 +20,8 @@ data class PlayerState(
     val phoenixFlightCount: Int = 0,    // Click tier 7: +5000.0 clicks/sec
     val blackHoleCount: Int = 0,        // Click tier 8: +30000.0 clicks/sec
     val equippedSkinId: String = "standard",
-    val unlockedSkins: String = "standard" // comma-separated strings
+    val unlockedSkins: String = "standard", // comma-separated strings
+    val lastSavedTime: Long = 0,
+    val banExpirationTime: Long = 0,
+    val autoclickerOffenseCount: Int = 0
 )

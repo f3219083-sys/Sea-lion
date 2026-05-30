@@ -113,10 +113,11 @@ fun GameScreen(
         }
     }
 
-    Scaffold(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("game_scaffold"),
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = modifier
+                .fillMaxSize()
+                .testTag("game_scaffold"),
         bottomBar = {
             val safeStateForNav = playerState
             NavigationBar(
@@ -317,6 +318,85 @@ fun GameScreen(
             }
         }
     }
+
+    val autoclickerBanTimeRemaining by viewModel.autoclickerBanTimeRemaining.collectAsStateWithLifecycle()
+    if (isClickerLocked) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.95f))
+                .clickable(enabled = true, onClick = {}), // consumes clicks to block screen
+            contentAlignment = Alignment.Center
+        ) {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .border(2.dp, Color.Red, RoundedCornerShape(24.dp)),
+                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF250202)),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "🤖 ΑΝΙΧΝΕΥΤΗΚE AUTO CLICKER! 🤖",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                        color = Color.Red,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "Έχετε αποκλειστεί προσωρινά διότι ανιχνεύτηκε εξαιρετικά γρήγορο clicking. Παρακαλώ παίξτε καθαρά!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Text(
+                        text = "Ποινή: -1,000 κλικ!",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                        color = Color(0xFFFFB4AB),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    
+                    val minutes = autoclickerBanTimeRemaining / 60
+                    val seconds = autoclickerBanTimeRemaining % 60
+                    val countdownFormatted = "%02d:%02d".format(minutes, seconds)
+
+                    Text(
+                        text = "Το παιχνίδι θα ξεκλειδωθεί αυτόματα σε:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.8f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Countdown banner box
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Red.copy(alpha = 0.15f))
+                            .border(1.dp, Color.Red.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = countdownFormatted,
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                ),
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+    }
+  }
 
     // Dialog: Level up
     levelUpAlert?.let { (level, name) ->
@@ -918,10 +998,10 @@ fun ClickerPlayground(
                                     id = System.nanoTime(),
                                     emoji = viewModel.getAnimalEmoji(state.currentLevel),
                                     xPercent = Random.nextFloat(),
-                                    y = -80f,
+                                    y = 220f,
                                     speed = Random.nextFloat() * 4f + 6f,
                                     rotationSpeed = Random.nextFloat() * 30f - 15f,
-                                    scale = Random.nextFloat() * 0.2f + 0.35f,
+                                    scale = Random.nextFloat() * 0.3f + 0.65f,
                                     rotation = Random.nextFloat() * 360f,
                                     creationTime = System.currentTimeMillis(),
                                     xSpeed = Random.nextFloat() * 0.04f - 0.02f
@@ -1157,83 +1237,7 @@ fun ClickerPlayground(
             }
         }
 
-        // 5. TRANSLUCENT OVERLAY WHEN AUTO-CLICKER IS LOCKED (PROMPT 6 & 7 REQUIREMENT)
-        if (isClickerLocked) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.94f))
-                    .clickable(enabled = true, onClick = {}), // consumes clicks to block screen
-                contentAlignment = Alignment.Center
-            ) {
-                ElevatedCard(
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .border(2.dp, Color.Red, RoundedCornerShape(24.dp)),
-                    colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF250202)),
-                    shape = RoundedCornerShape(24.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "🤖 ΑΝΙΧΝΕΥΤΗΚE AUTO CLICKER! 🤖",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
-                            color = Color.Red,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(
-                            text = "Έχετε αποκλειστεί προσωρινά διότι ανιχνεύτηκε εξαιρετικά γρήγορο clicking. Παρακαλώ παίξτε καθαρά!",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(18.dp))
-                        Text(
-                            text = "Ποινή: -1,000 κλικ!",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                            color = Color(0xFFFFB4AB),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(18.dp))
-                        
-                        val minutes = autoclickerBanTimeRemaining / 60
-                        val seconds = autoclickerBanTimeRemaining % 60
-                        val countdownFormatted = "%02d:%02d".format(minutes, seconds)
-
-                        Text(
-                            text = "Το παιχνίδι θα ξεκλειδωθεί αυτόματα:",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        // Countdown banner box
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color.Red.copy(alpha = 0.15f))
-                                .border(1.dp, Color.Red.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = countdownFormatted,
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Black,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                                ),
-                                color = Color.White
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        // Clicker lock overlay removed from here and moved globally to cover all tabs
     }
 }
 
@@ -1310,47 +1314,47 @@ fun ShopUpgradesPanel(
     val itemsList = listOf(
         ShopItemData(
             id = "click_power",
-            title = "👉 Heavy Paws",
+            title = "👉 Heavy Paws (Tap Up 1)",
             description = "Increases clicks gained per tap manually. Strengthens on high Level.",
-            multiplierLabel = "+1 Base Click per Level",
+            multiplierLabel = "+1 Clicks/Tap",
             baseCost = 15,
             currentCount = state.clickPowerLevel
         ),
         ShopItemData(
             id = "hamster_wheel",
-            title = "🐹 Hamster Wheel",
+            title = "🐹 Hamster Wheel (CPS Up 1)",
             description = "Auto-click helper. Simple but stable running speed.",
-            multiplierLabel = "+0.5 Click/sec",
+            multiplierLabel = "+0.5 Clicks/sec",
             baseCost = 50,
             currentCount = state.hamsterWheelCount
         ),
         ShopItemData(
             id = "cat_scratch",
-            title = "😼 Cat Scratch Pad",
-            description = "Harness razor-sharp feline motivation to auto-click.",
-            multiplierLabel = "+2.0 Clicks/sec",
+            title = "😼 Cat Scratch (Tap Up 2)",
+            description = "Harness razor-sharp feline motivation to increase Tap power.",
+            multiplierLabel = "+5 Clicks/Tap",
             baseCost = 250,
             currentCount = state.catScratchCount
         ),
         ShopItemData(
             id = "dog_bone",
-            title = "🍖 Dog Bone Squeaker",
+            title = "🍖 Dog Bone (CPS Up 2)",
             description = "Unleash persistent puppy energy for big click speeds.",
-            multiplierLabel = "+10.0 Clicks/sec",
+            multiplierLabel = "+20.0 Clicks/sec",
             baseCost = 1200,
             currentCount = state.dogBoneCount
         ),
         ShopItemData(
             id = "dragon_flame",
-            title = "🔥 Cosmic Dragon Flame",
-            description = "Summon ancient cosmic energy for ultimate click speed.",
-            multiplierLabel = "+50.0 Clicks/sec",
+            title = "🔥 Dragon Flame (Tap Up 3)",
+            description = "Summon ancient dragon energy for ultimate manual Tap power.",
+            multiplierLabel = "+50 Clicks/Tap",
             baseCost = 6000,
             currentCount = state.dragonFlameCount
         ),
         ShopItemData(
             id = "elephant_stampede",
-            title = "🐘 Elephant Stampede",
+            title = "🐘 Elephant Stampede (CPS Up 3)",
             description = "An incredibly heavy and rhythmic stomping machine helper.",
             multiplierLabel = "+200.0 Clicks/sec",
             baseCost = 35000,
@@ -1358,15 +1362,15 @@ fun ShopUpgradesPanel(
         ),
         ShopItemData(
             id = "cheetah_nitro",
-            title = "🐆 Cheetah Accelerator",
-            description = "Super-charged feline velocity for rapid boost.",
-            multiplierLabel = "+1000.0 Clicks/sec",
+            title = "🐆 Cheetah Speed (Tap Up 4)",
+            description = "Super-charged feline velocity for rapid boost on Tap.",
+            multiplierLabel = "+1000 Clicks/Tap",
             baseCost = 200000,
             currentCount = state.cheetahNitroCount
         ),
         ShopItemData(
             id = "phoenix_flight",
-            title = "🦅 Mystic Phoenix Flight",
+            title = "🦅 Phoenix Flight (CPS Up 4)",
             description = "Regenerative cosmic heat loops automatically click.",
             multiplierLabel = "+5000.0 Clicks/sec",
             baseCost = 1500000,
@@ -1374,9 +1378,9 @@ fun ShopUpgradesPanel(
         ),
         ShopItemData(
             id = "black_hole",
-            title = "🕳️ Interstellar Singularity",
-            description = "A powerful spatial warp that absorbs matter into clicks.",
-            multiplierLabel = "+30000.0 Clicks/sec",
+            title = "🕳️ Singularity (Tap Up 5)",
+            description = "A powerful spatial warp that boosts manual clicks heavily.",
+            multiplierLabel = "+30000 Clicks/Tap",
             baseCost = 12000000,
             currentCount = state.blackHoleCount
         )
@@ -1494,16 +1498,9 @@ fun ShopUpgradesPanel(
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = textMainColor,
-                                        fontSize = 14.sp
+                                        fontSize = 13.sp
                                     )
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Badge(
-                                    containerColor = if (isDarkBackground) Color.White.copy(alpha = 0.25f) else Color(0xFFEADDFF),
-                                    contentColor = if (isDarkBackground) Color.White else Color(0xFF21005D)
-                                ) {
-                                    Text("Owned: ${item.currentCount}", fontSize = 9.sp)
-                                }
                             }
 
                             Spacer(modifier = Modifier.height(1.dp))
@@ -1531,31 +1528,42 @@ fun ShopUpgradesPanel(
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        Button(
-                            onClick = { viewModel.buyUpgrade(item.id) },
-                            enabled = canAfford,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF6750A4),
-                                disabledContainerColor = if (isDarkBackground) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.12f)
-                            ),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier
-                                .testTag("buy_button_${item.id}"),
-                            shape = RoundedCornerShape(8.dp)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "BUY",
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontSize = 11.sp
-                                )
-                                Text(
-                                    text = "🐾 ${formatCompactNumber(cost)}",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                    fontSize = 9.sp
-                                )
+                            Button(
+                                onClick = { viewModel.buyUpgrade(item.id) },
+                                enabled = canAfford,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF6750A4),
+                                    disabledContainerColor = if (isDarkBackground) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.12f)
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .testTag("buy_button_${item.id}"),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "BUY",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        text = "🐾 ${formatCompactNumber(cost)}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                        fontSize = 9.sp
+                                    )
+                                }
                             }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Owned: ${item.currentCount}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                color = if (isDarkBackground) Color.White.copy(alpha = 0.9f) else Color(0xFF6750A4)
+                            )
                         }
                     }
                 }

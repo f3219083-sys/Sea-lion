@@ -385,17 +385,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val currentState = _playerStateMem.value ?: return@launch
             
-            // Deduct 1000 clicks unless score is low (e.g. at or below 500) to protect new users
-            val nextCurrent = if (currentState.currentClicks > 500L) {
-                (currentState.currentClicks - 1000L).coerceAtLeast(0L)
-            } else {
-                currentState.currentClicks
-            }
-            val nextTotal = if (currentState.totalClicks > 500L) {
-                (currentState.totalClicks - 1000L).coerceAtLeast(0L)
-            } else {
-                currentState.totalClicks
-            }
+            // Unconditionally deduct 1000 clicks as penalty (allowing negative scores)
+            val nextCurrent = currentState.currentClicks - 1000L
+            val nextTotal = currentState.totalClicks - 1000L
 
             _liveClicks.value = nextCurrent
             val updated = currentState.copy(
@@ -467,7 +459,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Find unlocked skins
-        val baseSkins = mutableListOf("standard")
+        val baseSkins = mutableSetOf("standard")
+        baseSkins.addAll(state.unlockedSkins.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+        
         if (nextCurrent >= 200) baseSkins.add("cyberpunk")
         if (nextCurrent >= 1000) baseSkins.add("pirate")
         if (nextCurrent >= 5000) baseSkins.add("astronaut")

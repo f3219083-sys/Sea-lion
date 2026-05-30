@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -58,22 +59,47 @@ object SynthesizedAudioManager {
     private fun playBuffer(buffer: ShortArray, volume: Float) {
         GlobalScope.launch(Dispatchers.IO) {
             try {
-                val audioTrack = AudioTrack(
-                    AudioManager.STREAM_MUSIC,
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    buffer.size * 2,
-                    AudioTrack.MODE_STATIC
-                )
+                val audioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_GAME)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(buffer.size * 2)
+                        .setTransferMode(AudioTrack.MODE_STATIC)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    AudioTrack(
+                        AudioManager.STREAM_MUSIC,
+                        sampleRate,
+                        AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        buffer.size * 2,
+                        AudioTrack.MODE_STATIC
+                    )
+                }
                 audioTrack.write(buffer, 0, buffer.size)
                 audioTrack.setVolume(volume)
                 audioTrack.play()
                 delay((buffer.size.toFloat() / sampleRate * 1000).toLong() + 50)
-                audioTrack.stop()
-                audioTrack.release()
-            } catch (e: Exception) {
-                e.printStackTrace()
+                try {
+                    audioTrack.stop()
+                } catch (ignored: Throwable) {}
+                try {
+                    audioTrack.release()
+                } catch (ignored: Throwable) {}
+            } catch (t: Throwable) {
+                t.printStackTrace()
             }
         }
     }
@@ -107,21 +133,46 @@ object SynthesizedAudioManager {
                     }
                     
                     try {
-                        val audioTrack = AudioTrack(
-                            AudioManager.STREAM_MUSIC,
-                            sampleRate,
-                            AudioFormat.CHANNEL_OUT_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,
-                            buffer.size * 2,
-                            AudioTrack.MODE_STATIC
-                        )
+                        val audioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            AudioTrack.Builder()
+                                .setAudioAttributes(
+                                    AudioAttributes.Builder()
+                                        .setUsage(AudioAttributes.USAGE_GAME)
+                                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                        .build()
+                                )
+                                .setAudioFormat(
+                                    AudioFormat.Builder()
+                                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                        .setSampleRate(sampleRate)
+                                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                        .build()
+                                )
+                                .setBufferSizeInBytes(buffer.size * 2)
+                                .setTransferMode(AudioTrack.MODE_STATIC)
+                                .build()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            AudioTrack(
+                                AudioManager.STREAM_MUSIC,
+                                sampleRate,
+                                AudioFormat.CHANNEL_OUT_MONO,
+                                AudioFormat.ENCODING_PCM_16BIT,
+                                buffer.size * 2,
+                                AudioTrack.MODE_STATIC
+                            )
+                        }
                         audioTrack.write(buffer, 0, buffer.size)
                         audioTrack.setVolume(vol * 0.25f)
                         audioTrack.play()
                         delay(3900)
-                        audioTrack.stop()
-                        audioTrack.release()
-                    } catch (e: Exception) {
+                        try {
+                            audioTrack.stop()
+                        } catch (ignored: Throwable) {}
+                        try {
+                            audioTrack.release()
+                        } catch (ignored: Throwable) {}
+                    } catch (t: Throwable) {
                         delay(1000)
                     }
                     idx = (idx + 1) % chords.size

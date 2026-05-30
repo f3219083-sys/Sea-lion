@@ -50,6 +50,331 @@ import kotlinx.coroutines.launch
 import kotlin.math.sin
 import kotlin.random.Random
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.text.font.FontStyle
+
+// Translator and Localizer dictionary
+fun getLocalizedString(lang: String, key: String): String {
+    val isGr = lang == "el"
+    return when (key) {
+        "tab_play" -> if (isGr) "Παιχνίδι" else "Play"
+        "tab_shop" -> if (isGr) "Μαγαζί" else "Shop"
+        "tab_skins" -> if (isGr) "Εμφανίσεις" else "Skins"
+        "tab_unlocks" -> if (isGr) "Εξέλιξη" else "Unlocks"
+        "settings_title" -> if (isGr) "Ρυθμίσεις Παιχνιδιού ⚙️" else "Game Settings ⚙️"
+        "settings_language" -> if (isGr) "Γλώσσα / Language" else "Language / Γλώσσα"
+        "settings_music" -> if (isGr) "🔊 Ένταση Μουσικής" else "🔊 Music Volume"
+        "settings_sfx" -> if (isGr) "🎵 Ένταση Ηχητικών Εφέ" else "🎵 Sound Effects Volume"
+        "settings_save" -> if (isGr) "Αποθήκευση & Κλείσιμο" else "Save & Close"
+        "settings_autoclicker" -> if (isGr) "Ασφάλεια Auto Clicker:" else "Auto Clicker Safety:"
+        "settings_status_enabled" -> if (isGr) "ΕΝΕΡΓΟΠΟΙΗΜΕΝΗ (Ασφαλής)" else "ENABLED (Protected)"
+        "settings_status_disabled" -> if (isGr) "ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΗ (Ελεύθερο)" else "DISABLED (Free Play)"
+        "ban_title" -> if (isGr) "⚠️ ΑΠΟΚΛΕΙΣΜΟΣ (BAN)" else "⚠️ TEMPORARY BAN ACTIVE"
+        "ban_desc" -> if (isGr) "Ανιχνεύτηκαν υπερβολικά γρήγορα κλικ (Auto Clicker)!" else "Excessively fast clicks detected (Auto Clicker)!"
+        "ban_penalty" -> if (isGr) "Ποινή: -1.000 κλικ!" else "Penalty: -1,000 Clicks!"
+        "ban_warning" -> if (isGr) "Παρακαλώ παίξτε καθαρά με τα δάχτυλά σας! Μην το ξανακάνετε." else "Please play clean using your fingers! Do not do it again."
+        "ban_remaining" -> if (isGr) "Χρόνος αποκλεισμού:" else "Time remaining:"
+        "welcome_back" -> if (isGr) "Καλώς ήρθες πίσω! 🎉" else "Welcome Back! 🎉"
+        "welcome_desc" -> if (isGr) "Κέρδισες %s κλικ (για %s δευτερόλεπτα απουσίας) όσο ήσουν εκτός!" else "You collected %s clicks (during %s seconds of offline absence)!"
+        "first_run_title" -> "Zoo Clicker 🦁"
+        "first_run_subtitle" -> "Διάλεξε τη γλώσσα σου / Choose your language"
+        else -> key
+    }
+}
+
+@Composable
+fun LanguageSelectionScreen(
+    onSelectLanguage: (String) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF310E5F), Color(0xFF0D0221)))),
+        contentAlignment = Alignment.Center
+    ) {
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .padding(24.dp)
+                .border(2.dp, Color(0xFFFFD700), RoundedCornerShape(24.dp)),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF1E1A3C))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Zoo Clicker 🦁",
+                    style = MaterialTheme.typography.displaySmall.copy(
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFFFD700),
+                        letterSpacing = 1.sp
+                    ),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Choose your language\nΕπιλέξτε τη γλώσσα σας",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(30.dp))
+
+                Button(
+                    onClick = { onSelectLanguage("el") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("🇬🇷 ΕΛΛΗΝΙΚΑ", fontSize = 16.sp, fontWeight = FontWeight.Black)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = { onSelectLanguage("en") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4), contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("🇬🇧 ENGLISH", fontSize = 16.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsDialog(
+    currentLanguage: String,
+    currentMusicVol: Float,
+    currentSfxVol: Float,
+    isAutoclickerDisabled: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, Float, Float) -> Unit
+) {
+    var lang by remember { mutableStateOf(currentLanguage) }
+    var music by remember { mutableFloatStateOf(currentMusicVol) }
+    var sfx by remember { mutableFloatStateOf(currentSfxVol) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .border(2.dp, Color(0xFF6750A4), RoundedCornerShape(20.dp)),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFF3EDF7))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = getLocalizedString(lang, "settings_title"),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF1C1B1F)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Language
+                Text(
+                    text = getLocalizedString(lang, "settings_language"),
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF49454F),
+                    modifier = Modifier.align(Alignment.Start)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { lang = "el" },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (lang == "el") Color(0xFF6750A4) else Color(0xFFE8DEF8),
+                            contentColor = if (lang == "el") Color.White else Color(0xFF1D192B)
+                        )
+                    ) {
+                        Text("🇬🇷 Ελληνικά")
+                    }
+                    Button(
+                        onClick = { lang = "en" },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (lang == "en") Color(0xFF6750A4) else Color(0xFFE8DEF8),
+                            contentColor = if (lang == "en") Color.White else Color(0xFF1D192B)
+                        )
+                    ) {
+                        Text("🇬🇧 English")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Music Volume Slider
+                Text(
+                    text = "${getLocalizedString(lang, "settings_music")} (${(music * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF49454F),
+                    modifier = Modifier.align(Alignment.Start)
+                )
+                Slider(
+                    value = music,
+                    onValueChange = { music = it },
+                    valueRange = 0f..1f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // SFX Volume Slider
+                Text(
+                    text = "${getLocalizedString(lang, "settings_sfx")} (${(sfx * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF49454F),
+                    modifier = Modifier.align(Alignment.Start)
+                )
+                Slider(
+                    value = sfx,
+                    onValueChange = { sfx = it },
+                    valueRange = 0f..1f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Auto clicker status box
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFCAC4D0).copy(alpha = 0.3f))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = getLocalizedString(lang, "settings_autoclicker"),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF1C1B1F)
+                    )
+                    Text(
+                        text = if (isAutoclickerDisabled) {
+                            getLocalizedString(lang, "settings_status_disabled")
+                        } else {
+                            getLocalizedString(lang, "settings_status_enabled")
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
+                        color = if (isAutoclickerDisabled) Color(0xFFB3261E) else Color(0xFF386A20)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Button(
+                    onClick = { onSave(lang, music, sfx) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4))
+                ) {
+                    Text(
+                        text = getLocalizedString(lang, "settings_save"),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BanWarningModal(
+    lang: String,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .border(3.dp, Color(0xFFB3261E), RoundedCornerShape(24.dp)),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFF1F0))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "⚠️ " + getLocalizedString(lang, "ban_title"),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                    color = Color(0xFFB3261E)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = getLocalizedString(lang, "ban_desc"),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.Black,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = getLocalizedString(lang, "ban_penalty"),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Black),
+                    color = Color(0xFFB3261E),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = getLocalizedString(lang, "ban_warning"),
+                    style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
+                    color = Color.DarkGray,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E))
+                ) {
+                    Text("OK", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                }
+            }
+        }
+    }
+}
+
+fun Modifier.multiTouchClickable(
+    enabled: Boolean = true,
+    onClick: (Offset) -> Unit
+): Modifier = this.pointerInput(enabled) {
+    if (!enabled) return@pointerInput
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent()
+            event.changes.forEach { change ->
+                if (change.changedToDown()) {
+                    change.consume()
+                    onClick(change.position)
+                }
+            }
+        }
+    }
+}
+
 // Class representing floating point indicator on animal click
 data class ClickIndicator(
     val id: Long,
@@ -71,6 +396,21 @@ fun GameScreen(
     val isClickerLocked by viewModel.isClickerLocked.collectAsStateWithLifecycle()
     val playTabPressCount by viewModel.playTabPressCount.collectAsStateWithLifecycle()
 
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.onAppResume()
+            } else if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+                viewModel.onAppPause()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     var activeTab by remember { mutableIntStateOf(0) } // 0: Clicker, 1: Shop, 2: Skins, 3: Leaderboard
 
     // Local animated float indicators
@@ -81,6 +421,29 @@ fun GameScreen(
     var levelUpAlert by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var skinUnlockedAlert by remember { mutableStateOf<Pair<String, String>?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // Settings & security overlays
+    var showSettings by remember { mutableStateOf(false) }
+    var showSecurityDisclaimer by remember { mutableStateOf(false) }
+    var showPostBanWarning by remember { mutableStateOf(false) }
+
+    val isProtectionDisabled by viewModel.isAutoclickerProtectionDisabled.collectAsStateWithLifecycle()
+    val autoclickerBanTimeRemaining by viewModel.autoclickerBanTimeRemaining.collectAsStateWithLifecycle()
+
+    var lastBanState by remember { mutableStateOf(false) }
+    LaunchedEffect(isClickerLocked) {
+        if (!isClickerLocked && lastBanState) {
+            // Ban ended!
+            showPostBanWarning = true
+        }
+        lastBanState = isClickerLocked
+    }
+
+    LaunchedEffect(isProtectionDisabled) {
+        if (isProtectionDisabled) {
+            showSecurityDisclaimer = true
+        }
+    }
 
     // Floating text decay loop
     LaunchedEffect(Unit) {
@@ -113,120 +476,165 @@ fun GameScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            modifier = modifier
-                .fillMaxSize()
-                .testTag("game_scaffold"),
-        bottomBar = {
-            val safeStateForNav = playerState
-            NavigationBar(
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .border(width = 1.dp, color = Color(0xFFCAC4D0).copy(alpha = 0.3f))
-                    .testTag("app_navigation_bar"),
-                containerColor = if (safeStateForNav == null || safeStateForNav.equippedSkinId == "standard") Color(0xFFF3EDF7) else Color.Black.copy(alpha = 0.45f),
-                tonalElevation = 0.dp
-            ) {
-                NavigationBarItem(
-                    selected = activeTab == 0,
-                    onClick = {
-                        if (isClickerLocked) {
-                            viewModel.incrementPlayTabPress()
-                        } else {
-                            activeTab = 0
-                        }
-                    },
-                    icon = { Icon(if (activeTab == 0) Icons.Filled.PlayArrow else Icons.Outlined.PlayArrow, contentDescription = "Play") },
-                    label = { Text("Play") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFF1D192B),
-                        selectedTextColor = Color(0xFF1D192B),
-                        unselectedIconColor = Color(0xFF49454F),
-                        unselectedTextColor = Color(0xFF49454F),
-                        indicatorColor = Color(0xFFE8DEF8)
-                    ),
-                    modifier = Modifier.testTag("tab_clicker")
-                )
-                NavigationBarItem(
-                    selected = activeTab == 1,
-                    onClick = {
-                        activeTab = 1
-                        viewModel.incrementShopTabPress()
-                    },
-                    icon = { Icon(if (activeTab == 1) Icons.Filled.ShoppingCart else Icons.Outlined.ShoppingCart, contentDescription = "Shop") },
-                    label = { Text("Shop") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFF1D192B),
-                        selectedTextColor = Color(0xFF1D192B),
-                        unselectedIconColor = Color(0xFF49454F),
-                        unselectedTextColor = Color(0xFF49454F),
-                        indicatorColor = Color(0xFFE8DEF8)
-                    ),
-                    modifier = Modifier.testTag("tab_shop")
-                )
-                NavigationBarItem(
-                    selected = activeTab == 2,
-                    onClick = { activeTab = 2 },
-                    icon = { Icon(if (activeTab == 2) Icons.Filled.Checkroom else Icons.Outlined.Checkroom, contentDescription = "Skins") },
-                    label = { Text("Skins") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFF1D192B),
-                        selectedTextColor = Color(0xFF1D192B),
-                        unselectedIconColor = Color(0xFF49454F),
-                        unselectedTextColor = Color(0xFF49454F),
-                        indicatorColor = Color(0xFFE8DEF8)
-                    ),
-                    modifier = Modifier.testTag("tab_skins")
-                )
-                NavigationBarItem(
-                    selected = activeTab == 3,
-                    onClick = { activeTab = 3 },
-                    icon = { Icon(if (activeTab == 3) Icons.Filled.Pets else Icons.Outlined.Pets, contentDescription = "Unlocks") },
-                    label = { Text("Unlocks") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFF1D192B),
-                        selectedTextColor = Color(0xFF1D192B),
-                        unselectedIconColor = Color(0xFF49454F),
-                        unselectedTextColor = Color(0xFF49454F),
-                        indicatorColor = Color(0xFFE8DEF8)
-                    ),
-                    modifier = Modifier.testTag("tab_unlocks")
-                )
+    val safeStateForFirstRun = playerState
+    if (safeStateForFirstRun != null && safeStateForFirstRun.selectedLanguage.isEmpty()) {
+        LanguageSelectionScreen(
+            onSelectLanguage = { lang ->
+                viewModel.updateSettings(lang, 0.4f, 0.5f)
             }
-        }
-    ) { paddingValues ->
-        val safeState = playerState
-
-        if (safeState == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            // Apply a nice lively cosmic dynamic background brush
-            val backgroundBrush = when (safeState.equippedSkinId) {
-                "cyberpunk" -> Brush.verticalGradient(listOf(Color(0xFF03001e), Color(0xFF7303c0), Color(0xFFec38bc)))
-                "astronaut" -> Brush.verticalGradient(listOf(Color(0xFF0B192C), Color(0xFF1E3E62)))
-                "god" -> Brush.verticalGradient(listOf(Color(0xFFFFEEEE), Color(0xFFDED9E2), Color(0xFFFFEEEE)))
-                "pirate" -> Brush.verticalGradient(listOf(Color(0xFF141E30), Color(0xFF243B55)))
-                "steampunk" -> Brush.verticalGradient(listOf(Color(0xFF2B1B17), Color(0xFF4A3B32), Color(0xFF8B6508)))
-                "retro" -> Brush.verticalGradient(listOf(Color(0xFF0D0D0D), Color(0xFF1B4D3E), Color(0xFF0D0D0D)))
-                "shadow" -> Brush.verticalGradient(listOf(Color(0xFF000000), Color(0xFF141414), Color(0xFF2C0A0A)))
-                "royal" -> Brush.verticalGradient(listOf(Color(0xFF3B0066), Color(0xFF4B0082), Color(0xFF800080)))
-                "cosmic" -> Brush.verticalGradient(listOf(Color(0xFF050515), Color(0xFF1A0B2E), Color(0xFF490B5E)))
-                else -> Brush.verticalGradient(listOf(Color(0xFFFEF7FF), Color(0xFFF3EDF7)))
+        )
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
+            val stateForGear = playerState
+            if (stateForGear != null) {
+                val isGearDarkBg = stateForGear.equippedSkinId in listOf("cyberpunk", "astronaut", "pirate", "steampunk", "retro", "shadow", "royal", "lava_fire", "cosmic", "neon_cyber", "magic_aurora")
+                val gearColor = when (stateForGear.equippedSkinId) {
+                    "cyberpunk" -> Color(0xFF00FFCC)
+                    "astronaut" -> Color(0xFF2196F3)
+                    "god" -> Color(0xFFFFD700)
+                    "pirate" -> Color(0xFFFFC107)
+                    "steampunk" -> Color(0xFFCD853F)
+                    "retro" -> Color(0xFF00FF00)
+                    "shadow" -> Color(0xFFFF0000)
+                    "royal" -> Color(0xFFFFD700)
+                    "lava_fire" -> Color(0xFFFF4500)
+                    "cosmic" -> Color(0xFF00FFFF)
+                    "neon_cyber" -> Color(0xFF00F0FF)
+                    "magic_aurora" -> Color(0xFF00FFCC)
+                    else -> if (isGearDarkBg) Color.White else Color(0xFF6750A4)
+                }
+                IconButton(
+                    onClick = { showSettings = true },
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 8.dp)
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), CircleShape)
+                        .testTag("settings_gear_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = gearColor,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
 
-            Box(
-                modifier = Modifier
+            Scaffold(
+                modifier = modifier
                     .fillMaxSize()
-                    .background(backgroundBrush)
-            ) {
+                    .testTag("game_scaffold"),
+            bottomBar = {
+                val safeStateForNav = playerState
+                NavigationBar(
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .border(width = 1.dp, color = Color(0xFFCAC4D0).copy(alpha = 0.3f))
+                        .testTag("app_navigation_bar"),
+                    containerColor = if (safeStateForNav == null || safeStateForNav.equippedSkinId == "standard") Color(0xFFF3EDF7) else Color.Black.copy(alpha = 0.45f),
+                    tonalElevation = 0.dp
+                ) {
+                    NavigationBarItem(
+                        selected = activeTab == 0,
+                        onClick = {
+                            if (isClickerLocked) {
+                                viewModel.incrementPlayTabPress()
+                            } else {
+                                activeTab = 0
+                            }
+                        },
+                        icon = { Icon(if (activeTab == 0) Icons.Filled.PlayArrow else Icons.Outlined.PlayArrow, contentDescription = "Play") },
+                        label = { Text(if (safeStateForNav != null) getLocalizedString(safeStateForNav.selectedLanguage, "tab_play") else "Play") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1D192B),
+                            selectedTextColor = Color(0xFF1D192B),
+                            unselectedIconColor = Color(0xFF49454F),
+                            unselectedTextColor = Color(0xFF49454F),
+                            indicatorColor = Color(0xFFE8DEF8)
+                        ),
+                        modifier = Modifier.testTag("tab_clicker")
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 1,
+                        onClick = {
+                            activeTab = 1
+                            viewModel.incrementShopTabPress()
+                        },
+                        icon = { Icon(if (activeTab == 1) Icons.Filled.ShoppingCart else Icons.Outlined.ShoppingCart, contentDescription = "Shop") },
+                        label = { Text(if (safeStateForNav != null) getLocalizedString(safeStateForNav.selectedLanguage, "tab_shop") else "Shop") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1D192B),
+                            selectedTextColor = Color(0xFF1D192B),
+                            unselectedIconColor = Color(0xFF49454F),
+                            unselectedTextColor = Color(0xFF49454F),
+                            indicatorColor = Color(0xFFE8DEF8)
+                        ),
+                        modifier = Modifier.testTag("tab_shop")
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 2,
+                        onClick = { activeTab = 2 },
+                        icon = { Icon(if (activeTab == 2) Icons.Filled.Checkroom else Icons.Outlined.Checkroom, contentDescription = "Skins") },
+                        label = { Text(if (safeStateForNav != null) getLocalizedString(safeStateForNav.selectedLanguage, "tab_skins") else "Skins") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1D192B),
+                            selectedTextColor = Color(0xFF1D192B),
+                            unselectedIconColor = Color(0xFF49454F),
+                            unselectedTextColor = Color(0xFF49454F),
+                            indicatorColor = Color(0xFFE8DEF8)
+                        ),
+                        modifier = Modifier.testTag("tab_skins")
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 3,
+                        onClick = { activeTab = 3 },
+                        icon = { Icon(if (activeTab == 3) Icons.Filled.Pets else Icons.Outlined.Pets, contentDescription = "Unlocks") },
+                        label = { Text(if (safeStateForNav != null) getLocalizedString(safeStateForNav.selectedLanguage, "tab_unlocks") else "Unlocks") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1D192B),
+                            selectedTextColor = Color(0xFF1D192B),
+                            unselectedIconColor = Color(0xFF49454F),
+                            unselectedTextColor = Color(0xFF49454F),
+                            indicatorColor = Color(0xFFE8DEF8)
+                        ),
+                        modifier = Modifier.testTag("tab_unlocks")
+                    )
+                }
+            }
+        ) { paddingValues ->
+            val safeState = playerState
+
+            if (safeState == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                // Apply a nice lively cosmic dynamic background brush
+                val backgroundBrush = when (safeState.equippedSkinId) {
+                    "cyberpunk" -> Brush.verticalGradient(listOf(Color(0xFF03001e), Color(0xFF7303c0), Color(0xFFec38bc)))
+                    "astronaut" -> Brush.verticalGradient(listOf(Color(0xFF0B192C), Color(0xFF1E3E62)))
+                    "god" -> Brush.verticalGradient(listOf(Color(0xFFFFEEEE), Color(0xFFDED9E2), Color(0xFFFFEEEE)))
+                    "pirate" -> Brush.verticalGradient(listOf(Color(0xFF141E30), Color(0xFF243B55)))
+                    "steampunk" -> Brush.verticalGradient(listOf(Color(0xFF2B1B17), Color(0xFF4A3B32), Color(0xFF8B6508)))
+                    "retro" -> Brush.verticalGradient(listOf(Color(0xFF0D0D0D), Color(0xFF1B4D3E), Color(0xFF0D0D0D)))
+                    "shadow" -> Brush.verticalGradient(listOf(Color(0xFF000000), Color(0xFF141414), Color(0xFF2C0A0A)))
+                    "royal" -> Brush.verticalGradient(listOf(Color(0xFF3B0066), Color(0xFF4B0082), Color(0xFF800080)))
+                    "cosmic" -> Brush.verticalGradient(listOf(Color(0xFF050515), Color(0xFF1A0B2E), Color(0xFF490B5E)))
+                    else -> Brush.verticalGradient(listOf(Color(0xFFFEF7FF), Color(0xFFF3EDF7)))
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(backgroundBrush)
+                ) {
                 // Background particle drawings for Cosmic skins
                 if (safeState.equippedSkinId == "god") {
                     BackgroundAmbientAura()
@@ -397,6 +805,7 @@ fun GameScreen(
         }
     }
   }
+}
 
     // Dialog: Level up
     levelUpAlert?.let { (level, name) ->
@@ -438,6 +847,117 @@ fun GameScreen(
             title = { Text("Information") },
             text = { Text(msg) }
         )
+    }
+
+    // Dialog: Settings dialog
+    val stateForSettings = playerState
+    if (showSettings && stateForSettings != null) {
+        SettingsDialog(
+            currentLanguage = stateForSettings.selectedLanguage,
+            currentMusicVol = stateForSettings.musicVolume,
+            currentSfxVol = stateForSettings.sfxVolume,
+            isAutoclickerDisabled = isProtectionDisabled,
+            onDismiss = { showSettings = false },
+            onSave = { newLang, newMusic, newSfx ->
+                viewModel.updateSettings(newLang, newMusic, newSfx)
+                showSettings = false
+            }
+        )
+    }
+
+    // Dialog: Post Ban warning
+    if (showPostBanWarning) {
+        val currentLang = playerState?.selectedLanguage ?: "en"
+        BanWarningModal(
+            lang = currentLang,
+            onDismiss = { showPostBanWarning = false }
+        )
+    }
+
+    // Dialog: Offline Earnings
+    val offlineEarningsCheck by viewModel.offlineEarnings.collectAsStateWithLifecycle()
+    offlineEarningsCheck?.let { (clicks, secs) ->
+        val currentLang = playerState?.selectedLanguage ?: "en"
+        Dialog(onDismissRequest = { viewModel.offlineEarnings.value = null }) {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .border(2.dp, Color(0xFFFFD700), RoundedCornerShape(24.dp)),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF1F1B2C))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "🐾 " + getLocalizedString(currentLang, "welcome_back"),
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
+                        color = Color(0xFFFFD700)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = getLocalizedString(currentLang, "welcome_desc")
+                            .format("%,d".format(clicks), secs.toString()),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = { viewModel.offlineEarnings.value = null },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black)
+                    ) {
+                        Text("Awesome!", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold))
+                    }
+                }
+            }
+        }
+    }
+
+    // Dialog: Security disclaimer deactivation dialog
+    if (showSecurityDisclaimer) {
+        Dialog(onDismissRequest = { showSecurityDisclaimer = false }) {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .border(2.dp, Color.Red, RoundedCornerShape(24.dp)),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF1A1A1A))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "⚠️ SECURITY DISABLED ⚠️",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                        color = Color.Red,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Auto-Clicker Detection has been successfully deactivated!\n\nYou can now tap freely without triggering penalty screens.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Button(
+                        onClick = { showSecurityDisclaimer = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red, contentColor = Color.White)
+                    ) {
+                        Text("UNDERSTOOD")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -874,31 +1394,27 @@ fun ClickerPlayground(
                             scaleY = animatedScale
                         }
                         .testTag("big_animal_clicker")
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            if (!isClickerLocked) {
-                                scale = 0.85f
-                                viewModel.onAnimalClicked()
-                                val randomX = Random.nextInt(-100, 100).toFloat()
-                                val randomY = Random.nextInt(-100, 0).toFloat()
-                                onFloatingIndicatorAdded("+${viewModel.calculateClicksPerTap(state)}", randomX, randomY)
+                        .multiTouchClickable(!isClickerLocked) { offset ->
+                            scale = 0.85f
+                            viewModel.onAnimalClicked()
+                            
+                            val xPos = offset.x - 115f
+                            val yPos = offset.y - 115f
+                            onFloatingIndicatorAdded("+${viewModel.calculateClicksPerTap(state)}", xPos, yPos)
 
-                                val tapAnimal = FallingAnimal(
-                                    id = System.nanoTime(),
-                                    emoji = viewModel.getAnimalEmoji(state.currentLevel),
-                                    xPercent = Random.nextFloat(),
-                                    y = 220f,
-                                    speed = Random.nextFloat() * 4f + 6f,
-                                    rotationSpeed = Random.nextFloat() * 30f - 15f,
-                                    scale = Random.nextFloat() * 0.3f + 0.65f,
-                                    rotation = Random.nextFloat() * 360f,
-                                    creationTime = System.currentTimeMillis(),
-                                    xSpeed = Random.nextFloat() * 0.04f - 0.02f
-                                )
-                                fallingAnimals = (fallingAnimals + tapAnimal).take(35)
-                            }
+                            val tapAnimal = FallingAnimal(
+                                id = System.nanoTime(),
+                                emoji = viewModel.getAnimalEmoji(state.currentLevel),
+                                xPercent = (offset.x / 230f).coerceIn(0f, 1f),
+                                y = 220f,
+                                speed = Random.nextFloat() * 4f + 6f,
+                                rotationSpeed = Random.nextFloat() * 30f - 15f,
+                                scale = Random.nextFloat() * 0.3f + 0.5f,
+                                rotation = Random.nextFloat() * 360f,
+                                creationTime = System.currentTimeMillis(),
+                                xSpeed = Random.nextFloat() * 0.04f - 0.02f
+                            )
+                            fallingAnimals = (fallingAnimals + tapAnimal).take(35)
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -1911,14 +2427,20 @@ fun UnlocksProgressionPanel(
                         if (isNextUnlock) {
                             val previousLevelThreshold = when (item.level) {
                                 1 -> 0L
-                                2 -> 200L
-                                3 -> 1000L
-                                4 -> 5000L
-                                5 -> 25000L
-                                6 -> 100000L
-                                7 -> 500000L
-                                8 -> 2500000L
-                                9 -> 12000000L
+                                2 -> 0L
+                                3 -> 200L
+                                4 -> 1000L
+                                5 -> 5000L
+                                6 -> 25000L
+                                7 -> 100000L
+                                8 -> 500000L
+                                9 -> 2500000L
+                                10 -> 12000000L
+                                11 -> 60000000L
+                                12 -> 300000000L
+                                13 -> 1500000000L
+                                14 -> 8000000000L
+                                15 -> 40000000000L
                                 else -> 0L
                             }
                             val fraction = if (item.clicksRequired > previousLevelThreshold) {

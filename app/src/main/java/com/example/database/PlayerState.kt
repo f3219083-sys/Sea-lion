@@ -23,5 +23,8 @@ data class PlayerState(
     val unlockedSkins: String = "standard", // comma-separated strings
     val lastSavedTime: Long = 0,
     val banExpirationTime: Long = 0,
-    val autoclickerOffenseCount: Int = 0
+    val autoclickerOffenseCount: Int = 0,
+    val selectedLanguage: String = "",
+    val musicVolume: Float = 0.5f,
+    val sfxVolume: Float = 0.5f
 )

@@ -7,6 +7,7 @@ import com.example.database.GameDatabase
 import com.example.database.LeaderboardEntry
 import com.example.database.PlayerState
 import com.example.repository.GameRepository
+import com.example.ui.SynthesizedAudioManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -50,6 +51,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // Live display values to make tap responsive without waiting for DB writes
     private val _liveClicks = MutableStateFlow<Long?>(null)
     val liveClicks: StateFlow<Long?> = _liveClicks.asStateFlow()
+
+    // Offline progress tracking state
+    val offlineEarnings = MutableStateFlow<Pair<Long, Long>?>(null)
 
     // Autoclicker detection and locking states
     val isClickerLocked = MutableStateFlow(false)
@@ -101,7 +105,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         if (offlineClicksCollected > 0) {
                             val nextCurrent = initial.currentClicks + offlineClicksCollected
                             val nextTotal = initial.totalClicks + offlineClicksCollected
-                            val currentLevel = calculateLevelForClicks(nextTotal)
+                            val currentLevel = calculateLevelForClicks(nextCurrent)
                             stateWithSavedTime = initial.copy(
                                 currentClicks = nextCurrent,
                                 totalClicks = nextTotal,
@@ -111,7 +115,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             isSavePending = true
                             
                             viewModelScope.launch(Dispatchers.Main) {
-                                _uiEvents.emit(GameUiEvent.GeneralError("Καλώς ήρθες πίσω! Κέρδισες $offlineClicksCollected κλικ (για ${elapsedTimeSec}δ απουσίας) όσο ήσουν εκτός! 🐾"))
+                                offlineEarnings.value = Pair(offlineClicksCollected, elapsedTimeSec)
                                 _liveClicks.value = nextCurrent
                             }
                         }
@@ -128,10 +132,85 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _playerStateMem.value = stateWithSavedTime
             _liveClicks.value = stateWithSavedTime.currentClicks
 
+            // Set media volumes and start ambient synth music
+            SynthesizedAudioManager.musicVolume = stateWithSavedTime.musicVolume
+            SynthesizedAudioManager.sfxVolume = stateWithSavedTime.sfxVolume
+            if (stateWithSavedTime.musicVolume > 0.01f) {
+                SynthesizedAudioManager.startBackgroundMusic()
+            }
+
             // Start clock loop for auto-clicking, AI, and saving updates
             launch { startAutoClickerLoop() }
             launch { startLeaderboardSimulationLoop() }
             launch { startDatabaseSyncLoop() }
+        }
+    }
+
+    fun onAppResume() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val state = _playerStateMem.value ?: return@launch
+            val nowMs = System.currentTimeMillis()
+            val cps = calculateCPS(state)
+            if (state.lastSavedTime > 0 && cps > 0) {
+                val elapsedTimeSec = (nowMs - state.lastSavedTime) / 1000L
+                if (elapsedTimeSec >= 10) {
+                    val offlineClicksCollected = (elapsedTimeSec * cps).toLong()
+                    if (offlineClicksCollected > 0) {
+                        val nextCurrent = state.currentClicks + offlineClicksCollected
+                        val nextTotal = state.totalClicks + offlineClicksCollected
+                        val currentLevel = calculateLevelForClicks(nextCurrent)
+                        val updated = state.copy(
+                            currentClicks = nextCurrent,
+                            totalClicks = nextTotal,
+                            currentLevel = currentLevel,
+                            lastSavedTime = nowMs
+                        )
+                        _playerStateMem.value = updated
+                        _liveClicks.value = nextCurrent
+                        offlineEarnings.value = Pair(offlineClicksCollected, elapsedTimeSec)
+                        isSavePending = true
+                        
+                        SynthesizedAudioManager.playPurchase()
+                    }
+                }
+            }
+            val refreshed = _playerStateMem.value ?: return@launch
+            _playerStateMem.value = refreshed.copy(lastSavedTime = nowMs)
+            isSavePending = true
+            
+            if (refreshed.musicVolume > 0.01f) {
+                SynthesizedAudioManager.startBackgroundMusic()
+            }
+        }
+    }
+
+    fun onAppPause() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val state = _playerStateMem.value ?: return@launch
+            val updated = state.copy(lastSavedTime = System.currentTimeMillis())
+            _playerStateMem.value = updated
+            repository.updatePlayerState(updated)
+            SynthesizedAudioManager.stopBackgroundMusic()
+        }
+    }
+
+    fun updateSettings(selectedLanguage: String, musicVolume: Float, sfxVolume: Float) {
+        viewModelScope.launch {
+            val state = _playerStateMem.value ?: return@launch
+            val updated = state.copy(
+                selectedLanguage = selectedLanguage,
+                musicVolume = musicVolume,
+                sfxVolume = sfxVolume
+            )
+            _playerStateMem.value = updated
+            SynthesizedAudioManager.musicVolume = musicVolume
+            SynthesizedAudioManager.sfxVolume = sfxVolume
+            if (musicVolume > 0.01f) {
+                SynthesizedAudioManager.startBackgroundMusic()
+            } else {
+                SynthesizedAudioManager.stopBackgroundMusic()
+            }
+            repository.updatePlayerState(updated)
         }
     }
 
@@ -241,11 +320,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        SynthesizedAudioManager.playClick()
+
         viewModelScope.launch {
             val currentState = _playerStateMem.value ?: return@launch
             val tapBonus = calculateClicksPerTap(currentState)
 
-            val nextTotalClicks = currentState.totalClicks + tapBonus
+            val nextTotalClicks = currentState.currentClicks + tapBonus
             val nextCurrentClicks = currentState.currentClicks + tapBonus
 
             _liveClicks.value = nextCurrentClicks
@@ -279,9 +360,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     synchronized(clickTimestamps) {
                         clickTimestamps.clear()
                     }
-                    if (!isAutoclickerProtectionDisabled.value) {
-                        _uiEvents.emit(GameUiEvent.GeneralError("Ο αποκλεισμός έληξε! Το παιχνίδι ξεκλειδώθηκε. Παρακαλώ παίξτε καθαρά!"))
-                    }
                     break
                 }
                 delay(1000)
@@ -295,7 +373,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val newOffenseCount = autoclickerOffenses.value + 1
         autoclickerOffenses.value = newOffenseCount
 
-        // 1st offense = 1 min (60s), 2nd = 2 mins (120s), 3rd = 4 mins (240s)...
+        // Ban seconds multiply based on offenses count
         val banMinutes = 2.0.pow(newOffenseCount - 1).toLong()
         val banSeconds = banMinutes * 60L
         val banExpirationMs = System.currentTimeMillis() + (banSeconds * 1000L)
@@ -330,7 +408,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             isSavePending = true
             
             repository.updatePlayerState(updated) // Save penalty to DB immediately
-            _uiEvents.emit(GameUiEvent.GeneralError("Ανιχνεύτηκε Auto Clicker! Ποινή: -1,000 κλικ. Προσωρινός αποκλεισμός για $banMinutes λεπτά!"))
             
             // Start real-time countdown timer tick loop
             startBanCountdownTimer(banExpirationMs)
@@ -348,9 +425,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             synchronized(clickTimestamps) {
                 clickTimestamps.clear()
             }
-            viewModelScope.launch {
-                _uiEvents.emit(GameUiEvent.GeneralError("Το παιχνίδι ξεκλειδώθηκε με επιτυχία! Παρακαλώ παίξτε καθαρά!"))
-            }
         }
     }
 
@@ -365,9 +439,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             synchronized(clickTimestamps) {
                 clickTimestamps.clear()
             }
-            viewModelScope.launch {
-                _uiEvents.emit(GameUiEvent.GeneralError("⚠️ Η ασφάλεια για το Auto Clicker έχει απενεργοποιηθεί επιτυχώς!"))
-            }
         }
     }
 
@@ -376,44 +447,44 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         nextTotal: Long,
         nextCurrent: Long
     ) {
-        // Find next level based on curation of real-animal categories
+        // Find next level based on current clicks balance
         val nextLevel = when {
-            nextTotal >= 200000000000L -> 15 // Wise Elephant (Mythic Masterclass)
-            nextTotal >= 40000000000L -> 14  // Great White Shark (Legendary Category)
-            nextTotal >= 8000000000L -> 13   // Silverback Gorilla (Legendary Category)
-            nextTotal >= 1500000000L -> 12  // Giant Whale (Epic Category)
-            nextTotal >= 300000000L -> 11   // Fearsome Tiger (Epic Category)
-            nextTotal >= 60000000L -> 10    // Friendly Panda (Rare Category)
-            nextTotal >= 12000000L -> 9     // Majestic Lion (Rare Category)
-            nextTotal >= 2500000L -> 8      // Clever Fox (Rare Category)
-            nextTotal >= 500000L -> 7       // Colorful Parrot (Uncommon Category)
-            nextTotal >= 100000L -> 6       // Tiny Turtle (Uncommon Category)
-            nextTotal >= 25000L -> 5        // Cheeky Monkey (Uncommon Category)
-            nextTotal >= 5000L -> 4         // Fluffy Bunny (Common Category)
-            nextTotal >= 1000L -> 3         // Loyal Doggy (Common Category)
-            nextTotal >= 200L -> 2          // Playful Kitty (Common Category)
+            nextCurrent >= 200000000000L -> 15 // Wise Elephant (Mythic Masterclass)
+            nextCurrent >= 40000000000L -> 14  // Great White Shark (Legendary Category)
+            nextCurrent >= 8000000000L -> 13   // Silverback Gorilla (Legendary Category)
+            nextCurrent >= 1500000000L -> 12  // Giant Whale (Epic Category)
+            nextCurrent >= 300000000L -> 11   // Fearsome Tiger (Epic Category)
+            nextCurrent >= 60000000L -> 10    // Friendly Panda (Rare Category)
+            nextCurrent >= 12000000L -> 9     // Majestic Lion (Rare Category)
+            nextCurrent >= 2500000L -> 8      // Clever Fox (Rare Category)
+            nextCurrent >= 500000L -> 7       // Colorful Parrot (Uncommon Category)
+            nextCurrent >= 100000L -> 6       // Tiny Turtle (Uncommon Category)
+            nextCurrent >= 25000L -> 5        // Cheeky Monkey (Uncommon Category)
+            nextCurrent >= 5000L -> 4         // Fluffy Bunny (Common Category)
+            nextCurrent >= 1000L -> 3         // Loyal Doggy (Common Category)
+            nextCurrent >= 200L -> 2          // Playful Kitty (Common Category)
             else -> 1                       // Cute Hamster (Common Category)
         }
 
-        // Find unlocked skins (Classic + Theme list + 3 newly added specialized skins!)
+        // Find unlocked skins
         val baseSkins = mutableListOf("standard")
-        if (nextTotal >= 200) baseSkins.add("cyberpunk")
-        if (nextTotal >= 1000) baseSkins.add("pirate")
-        if (nextTotal >= 5000) baseSkins.add("astronaut")
-        if (nextTotal >= 25000) baseSkins.add("god")
-        if (nextTotal >= 50000) baseSkins.add("steampunk")
-        if (nextTotal >= 150000) baseSkins.add("retro")
-        if (nextTotal >= 500000) baseSkins.add("shadow")
-        if (nextTotal >= 2000000) baseSkins.add("royal")
-        if (nextTotal >= 5000000) baseSkins.add("lava_fire")
-        if (nextTotal >= 10000000) baseSkins.add("cosmic")
-        if (nextTotal >= 100000000) baseSkins.add("neon_cyber")
-        if (nextTotal >= 1000000000) baseSkins.add("magic_aurora")
+        if (nextCurrent >= 200) baseSkins.add("cyberpunk")
+        if (nextCurrent >= 1000) baseSkins.add("pirate")
+        if (nextCurrent >= 5000) baseSkins.add("astronaut")
+        if (nextCurrent >= 25000) baseSkins.add("god")
+        if (nextCurrent >= 50000) baseSkins.add("steampunk")
+        if (nextCurrent >= 150000) baseSkins.add("retro")
+        if (nextCurrent >= 500000) baseSkins.add("shadow")
+        if (nextCurrent >= 2000000) baseSkins.add("royal")
+        if (nextCurrent >= 5000000) baseSkins.add("lava_fire")
+        if (nextCurrent >= 10000000) baseSkins.add("cosmic")
+        if (nextCurrent >= 100000000) baseSkins.add("neon_cyber")
+        if (nextCurrent >= 1000000000) baseSkins.add("magic_aurora")
 
         val currentUnlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
         val newlyUnlockedSkins = baseSkins.filter { !currentUnlockedList.contains(it) }
 
-        // Send UI events for milestones
+        // Send UI events for milestones (only if ascending to protect against noise, but let level decrease go silent)
         if (nextLevel > state.currentLevel) {
             _uiEvents.emit(GameUiEvent.LevelUp(nextLevel, getAnimalNameForLevel(nextLevel)))
         }
@@ -423,10 +494,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val highestNewSkin = newlyUnlockedSkins.lastOrNull()
-        val finalEquippedSkinId = highestNewSkin ?: state.equippedSkinId
+        // If highestNewSkin is unlocked, auto-apply it. Otherwise, fallback to standard if currently equipped skin gets locked.
+        val finalEquippedSkinId = if (highestNewSkin != null) {
+            highestNewSkin
+        } else if (baseSkins.contains(state.equippedSkinId)) {
+            state.equippedSkinId
+        } else {
+            "standard"
+        }
 
         val updatedState = state.copy(
-            totalClicks = nextTotal,
+            totalClicks = nextCurrent, // totalClicks and currentClicks completely in sync
             currentClicks = nextCurrent,
             currentLevel = nextLevel,
             unlockedSkins = baseSkins.joinToString(","),
@@ -459,23 +537,23 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _liveClicks.value = nextClicks
 
                 val updatedState = when (upgradeId) {
-                    "click_power" -> state.copy(clickPowerLevel = state.clickPowerLevel + 1, currentClicks = nextClicks)
-                    "hamster_wheel" -> state.copy(hamsterWheelCount = state.hamsterWheelCount + 1, currentClicks = nextClicks)
-                    "cat_scratch" -> state.copy(catScratchCount = state.catScratchCount + 1, currentClicks = nextClicks)
-                    "dog_bone" -> state.copy(dogBoneCount = state.dogBoneCount + 1, currentClicks = nextClicks)
-                    "dragon_flame" -> state.copy(dragonFlameCount = state.dragonFlameCount + 1, currentClicks = nextClicks)
-                    "elephant_stampede" -> state.copy(elephantStampedeCount = state.elephantStampedeCount + 1, currentClicks = nextClicks)
-                    "cheetah_nitro" -> state.copy(cheetahNitroCount = state.cheetahNitroCount + 1, currentClicks = nextClicks)
-                    "phoenix_flight" -> state.copy(phoenixFlightCount = state.phoenixFlightCount + 1, currentClicks = nextClicks)
-                    "black_hole" -> state.copy(blackHoleCount = state.blackHoleCount + 1, currentClicks = nextClicks)
-                    else -> state
+                    "click_power" -> state.copy(clickPowerLevel = state.clickPowerLevel + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "hamster_wheel" -> state.copy(hamsterWheelCount = state.hamsterWheelCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "cat_scratch" -> state.copy(catScratchCount = state.catScratchCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "dog_bone" -> state.copy(dogBoneCount = state.dogBoneCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "dragon_flame" -> state.copy(dragonFlameCount = state.dragonFlameCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "elephant_stampede" -> state.copy(elephantStampedeCount = state.elephantStampedeCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "cheetah_nitro" -> state.copy(cheetahNitroCount = state.cheetahNitroCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "phoenix_flight" -> state.copy(phoenixFlightCount = state.phoenixFlightCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    "black_hole" -> state.copy(blackHoleCount = state.blackHoleCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
+                    else -> state.copy(currentClicks = nextClicks, totalClicks = nextClicks)
                 }
 
-                _playerStateMem.value = updatedState
-                repository.updatePlayerState(updatedState) // Persist transaction to DB instantly
+                SynthesizedAudioManager.playPurchase()
+                updateStateInMemoryAndCheckMilestones(updatedState, nextClicks, nextClicks)
                 syncUserWithLeaderboard(updatedState)
             } else {
-                _uiEvents.emit(GameUiEvent.GeneralError("Δεν έχετε αρκετά 🐾 για αυτή την αναβάθμιση!"))
+                // We don't dispatch an English error or Greek hardcoded error, we use simple toast context or let the UI handle affordances
             }
         }
     }
@@ -524,12 +602,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             if (cps > 0) {
                 val increment = cps * 0.1
                 val nextCurrent = state.currentClicks + increment.toLong()
-                val nextTotal = state.totalClicks + increment.toLong()
 
                 _liveClicks.value = nextCurrent
                 
                 // Advance evolution tiers dynamically in local memory as counts ticking
-                updateStateInMemoryAndCheckMilestones(state, nextTotal, nextCurrent)
+                updateStateInMemoryAndCheckMilestones(state, nextCurrent, nextCurrent)
             }
         }
     }

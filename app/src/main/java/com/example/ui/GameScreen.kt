@@ -162,7 +162,7 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
     onSave: (String, Float, Float) -> Unit
 ) {
-    var lang by remember { mutableStateOf(currentLanguage) }
+    var lang by remember { mutableStateOf("en") }
     var music by remember { mutableFloatStateOf(currentMusicVol) }
     var sfx by remember { mutableFloatStateOf(currentSfxVol) }
 
@@ -186,42 +186,6 @@ fun SettingsDialog(
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = Color(0xFF1C1B1F)
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Language
-                Text(
-                    text = getLocalizedString(lang, "settings_language"),
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = Color(0xFF49454F),
-                    modifier = Modifier.align(Alignment.Start)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { lang = "el" },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (lang == "el") Color(0xFF6750A4) else Color(0xFFE8DEF8),
-                            contentColor = if (lang == "el") Color.White else Color(0xFF1D192B)
-                        )
-                    ) {
-                        Text("🇬🇷 Ελληνικά")
-                    }
-                    Button(
-                        onClick = { lang = "en" },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (lang == "en") Color(0xFF6750A4) else Color(0xFFE8DEF8),
-                            contentColor = if (lang == "en") Color.White else Color(0xFF1D192B)
-                        )
-                    ) {
-                        Text("🇬🇧 English")
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Music Volume Slider
@@ -477,7 +441,7 @@ fun GameScreen(
     }
 
     val safeStateForFirstRun = playerState
-    if (safeStateForFirstRun != null && safeStateForFirstRun.selectedLanguage.isEmpty()) {
+    if (false) { // LanguageSelectionScreen removed as requested to default to English only
         LanguageSelectionScreen(
             onSelectLanguage = { lang ->
                 viewModel.updateSettings(lang, 0.4f, 0.5f)
@@ -1218,12 +1182,12 @@ fun ClickerPlayground(
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
 
-    // Bounce tap scale animation
+    // Snappy and bouncy tap scale animation
     val animatedScale by animateFloatAsState(
         targetValue = scale,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            dampingRatio = 0.45f,
+            stiffness = Spring.StiffnessMedium
         ),
         label = "click_scale_animation",
         finishedListener = {

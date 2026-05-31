@@ -66,6 +66,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val isAutoclickerProtectionDisabled = MutableStateFlow(false)
     val shopTabPressCount = MutableStateFlow(0)
 
+    private val stateMutex = Mutex()
     private var isSavePending = false
 
     init {
@@ -86,27 +87,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val nowMs = System.currentTimeMillis()
             var stateWithSavedTime = initial
             
-            // Check if user is currently banned based on stored banExpirationTime in DB
-            if (initial.banExpirationTime > nowMs) {
-                val remSeconds = (initial.banExpirationTime - nowMs) / 1000L
-                viewModelScope.launch(Dispatchers.Main) {
-                    isClickerLocked.value = true
-                    autoclickerBanTimeRemaining.value = remSeconds
-                    autoclickerOffenses.value = initial.autoclickerOffenseCount
-                    startBanCountdownTimer(initial.banExpirationTime)
-                }
-            } else {
+            // Default selectLanguage to English immediately to remove selection screen
+            if (stateWithSavedTime.selectedLanguage.isEmpty() || stateWithSavedTime.selectedLanguage == "el") {
+                stateWithSavedTime = stateWithSavedTime.copy(selectedLanguage = "en")
+                isSavePending = true
+            }
+
+            val isBanned = checkAndApplyBanStatus(stateWithSavedTime, nowMs)
+            
+            if (!isBanned) {
                 // Not banned or ban expired. Check offline clicks!
-                val cps = calculateCPS(initial)
-                if (initial.lastSavedTime > 0 && cps > 0) {
-                    val elapsedTimeSec = (nowMs - initial.lastSavedTime) / 1000L
+                val cps = calculateCPS(stateWithSavedTime)
+                if (stateWithSavedTime.lastSavedTime > 0 && cps > 0) {
+                    val elapsedTimeSec = (nowMs - stateWithSavedTime.lastSavedTime) / 1000L
                     if (elapsedTimeSec >= 10) { // minimum 10 seconds of absence to count as offline progress
                         val offlineClicksCollected = (elapsedTimeSec * cps).toLong()
                         if (offlineClicksCollected > 0) {
-                            val nextCurrent = initial.currentClicks + offlineClicksCollected
-                            val nextTotal = initial.totalClicks + offlineClicksCollected
-                            val currentLevel = calculateLevelForClicks(nextCurrent)
-                            stateWithSavedTime = initial.copy(
+                            val nextCurrent = stateWithSavedTime.currentClicks + offlineClicksCollected
+                            val nextTotal = stateWithSavedTime.totalClicks + offlineClicksCollected
+                            val currentLevel = maxOf(stateWithSavedTime.currentLevel, calculateLevelForClicks(nextCurrent))
+                            stateWithSavedTime = stateWithSavedTime.copy(
                                 currentClicks = nextCurrent,
                                 totalClicks = nextTotal,
                                 currentLevel = currentLevel,
@@ -114,7 +114,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             )
                             isSavePending = true
                             
-                            viewModelScope.launch(Dispatchers.Main) {
+                            viewModelScope.launch {
                                 offlineEarnings.value = Pair(offlineClicksCollected, elapsedTimeSec)
                                 _liveClicks.value = nextCurrent
                             }
@@ -148,49 +148,60 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onAppResume() {
         viewModelScope.launch(Dispatchers.IO) {
-            val state = _playerStateMem.value ?: return@launch
-            val nowMs = System.currentTimeMillis()
-            val cps = calculateCPS(state)
-            if (state.lastSavedTime > 0 && cps > 0) {
-                val elapsedTimeSec = (nowMs - state.lastSavedTime) / 1000L
-                if (elapsedTimeSec >= 10) {
-                    val offlineClicksCollected = (elapsedTimeSec * cps).toLong()
-                    if (offlineClicksCollected > 0) {
-                        val nextCurrent = state.currentClicks + offlineClicksCollected
-                        val nextTotal = state.totalClicks + offlineClicksCollected
-                        val currentLevel = calculateLevelForClicks(nextCurrent)
-                        val updated = state.copy(
-                            currentClicks = nextCurrent,
-                            totalClicks = nextTotal,
-                            currentLevel = currentLevel,
-                            lastSavedTime = nowMs
-                        )
-                        _playerStateMem.value = updated
-                        _liveClicks.value = nextCurrent
-                        offlineEarnings.value = Pair(offlineClicksCollected, elapsedTimeSec)
-                        isSavePending = true
-                        
-                        SynthesizedAudioManager.playPurchase()
+            stateMutex.withLock {
+                val state = _playerStateMem.value ?: return@withLock
+                val nowMs = System.currentTimeMillis()
+                
+                val isBanned = checkAndApplyBanStatus(state, nowMs)
+                
+                if (!isBanned) {
+                    val cps = calculateCPS(state)
+                    if (state.lastSavedTime > 0 && cps > 0) {
+                        val elapsedTimeSec = (nowMs - state.lastSavedTime) / 1000L
+                        if (elapsedTimeSec >= 10) {
+                            val offlineClicksCollected = (elapsedTimeSec * cps).toLong()
+                            if (offlineClicksCollected > 0) {
+                                val nextCurrent = state.currentClicks + offlineClicksCollected
+                                val nextTotal = state.totalClicks + offlineClicksCollected
+                                val currentLevel = maxOf(state.currentLevel, calculateLevelForClicks(nextCurrent))
+                                val updated = state.copy(
+                                    currentClicks = nextCurrent,
+                                    totalClicks = nextTotal,
+                                    currentLevel = currentLevel,
+                                    lastSavedTime = nowMs
+                                )
+                                _playerStateMem.value = updated
+                                _liveClicks.value = nextCurrent
+                                offlineEarnings.value = Pair(offlineClicksCollected, elapsedTimeSec)
+                                isSavePending = true
+                                
+                                SynthesizedAudioManager.playPurchase()
+                            }
+                        }
                     }
                 }
-            }
-            val refreshed = _playerStateMem.value ?: return@launch
-            _playerStateMem.value = refreshed.copy(lastSavedTime = nowMs)
-            isSavePending = true
-            
-            if (refreshed.musicVolume > 0.01f) {
-                SynthesizedAudioManager.startBackgroundMusic()
+                
+                val refreshed = _playerStateMem.value ?: return@withLock
+                val finalUpdated = refreshed.copy(lastSavedTime = nowMs)
+                _playerStateMem.value = finalUpdated
+                isSavePending = true
+                
+                if (finalUpdated.musicVolume > 0.01f) {
+                    SynthesizedAudioManager.startBackgroundMusic()
+                }
             }
         }
     }
 
     fun onAppPause() {
         viewModelScope.launch(Dispatchers.IO) {
-            val state = _playerStateMem.value ?: return@launch
-            val updated = state.copy(lastSavedTime = System.currentTimeMillis())
-            _playerStateMem.value = updated
-            repository.updatePlayerState(updated)
-            SynthesizedAudioManager.stopBackgroundMusic()
+            stateMutex.withLock {
+                val state = _playerStateMem.value ?: return@withLock
+                val updated = state.copy(lastSavedTime = System.currentTimeMillis())
+                _playerStateMem.value = updated
+                repository.updatePlayerState(updated)
+                SynthesizedAudioManager.stopBackgroundMusic()
+            }
         }
     }
 
@@ -323,15 +334,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         SynthesizedAudioManager.playClick()
 
         viewModelScope.launch {
-            val currentState = _playerStateMem.value ?: return@launch
-            val tapBonus = calculateClicksPerTap(currentState)
+            stateMutex.withLock {
+                val currentState = _playerStateMem.value ?: return@withLock
+                val tapBonus = calculateClicksPerTap(currentState)
+                val nextCurrentClicks = currentState.currentClicks + tapBonus
 
-            val nextTotalClicks = currentState.currentClicks + tapBonus
-            val nextCurrentClicks = currentState.currentClicks + tapBonus
+                _liveClicks.value = nextCurrentClicks
 
-            _liveClicks.value = nextCurrentClicks
-
-            updateStateInMemoryAndCheckMilestones(currentState, nextTotalClicks, nextCurrentClicks)
+                val finalState = checkAndApplyMilestonesAndSkins(currentState, nextCurrentClicks)
+                _playerStateMem.value = finalState
+                isSavePending = true
+            }
         }
     }
 
@@ -350,11 +363,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     isClickerLocked.value = false
                     
                     // persist ban clear in db
-                    val current = _playerStateMem.value
-                    if (current != null) {
-                        val cleared = current.copy(banExpirationTime = 0)
-                        _playerStateMem.value = cleared
-                        repository.updatePlayerState(cleared)
+                    stateMutex.withLock {
+                        val current = _playerStateMem.value
+                        if (current != null) {
+                            val cleared = current.copy(banExpirationTime = 0)
+                            _playerStateMem.value = cleared
+                            repository.updatePlayerState(cleared)
+                        }
                     }
                     
                     synchronized(clickTimestamps) {
@@ -383,26 +398,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         playTabPressCount.value = 0
 
         viewModelScope.launch {
-            val currentState = _playerStateMem.value ?: return@launch
-            
-            // Unconditionally deduct 1000 clicks as penalty (allowing negative scores)
-            val nextCurrent = currentState.currentClicks - 1000L
-            val nextTotal = currentState.totalClicks - 1000L
+            stateMutex.withLock {
+                val currentState = _playerStateMem.value ?: return@withLock
+                
+                // Unconditionally deduct 1000 clicks as penalty (allowing negative scores)
+                val nextCurrent = currentState.currentClicks - 1000L
+                val nextTotal = currentState.totalClicks - 1000L
 
-            _liveClicks.value = nextCurrent
-            val updated = currentState.copy(
-                currentClicks = nextCurrent,
-                totalClicks = nextTotal,
-                banExpirationTime = banExpirationMs,
-                autoclickerOffenseCount = newOffenseCount
-            )
-            _playerStateMem.value = updated
-            isSavePending = true
-            
-            repository.updatePlayerState(updated) // Save penalty to DB immediately
-            
-            // Start real-time countdown timer tick loop
-            startBanCountdownTimer(banExpirationMs)
+                _liveClicks.value = nextCurrent
+                val updated = currentState.copy(
+                    currentClicks = nextCurrent,
+                    totalClicks = nextTotal,
+                    banExpirationTime = banExpirationMs,
+                    autoclickerOffenseCount = newOffenseCount
+                )
+                _playerStateMem.value = updated
+                isSavePending = true
+                
+                repository.updatePlayerState(updated) // Save penalty to DB immediately
+                syncUserWithLeaderboard(updated)
+                
+                // Start real-time countdown timer tick loop
+                startBanCountdownTimer(banExpirationMs)
+            }
         }
     }
 
@@ -434,132 +452,61 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun updateStateInMemoryAndCheckMilestones(
-        state: PlayerState,
-        nextTotal: Long,
-        nextCurrent: Long
-    ) {
-        // Find next level based on current clicks balance
-        val nextLevel = when {
-            nextCurrent >= 200000000000L -> 15 // Wise Elephant (Mythic Masterclass)
-            nextCurrent >= 40000000000L -> 14  // Great White Shark (Legendary Category)
-            nextCurrent >= 8000000000L -> 13   // Silverback Gorilla (Legendary Category)
-            nextCurrent >= 1500000000L -> 12  // Giant Whale (Epic Category)
-            nextCurrent >= 300000000L -> 11   // Fearsome Tiger (Epic Category)
-            nextCurrent >= 60000000L -> 10    // Friendly Panda (Rare Category)
-            nextCurrent >= 12000000L -> 9     // Majestic Lion (Rare Category)
-            nextCurrent >= 2500000L -> 8      // Clever Fox (Rare Category)
-            nextCurrent >= 500000L -> 7       // Colorful Parrot (Uncommon Category)
-            nextCurrent >= 100000L -> 6       // Tiny Turtle (Uncommon Category)
-            nextCurrent >= 25000L -> 5        // Cheeky Monkey (Uncommon Category)
-            nextCurrent >= 5000L -> 4         // Fluffy Bunny (Common Category)
-            nextCurrent >= 1000L -> 3         // Loyal Doggy (Common Category)
-            nextCurrent >= 200L -> 2          // Playful Kitty (Common Category)
-            else -> 1                       // Cute Hamster (Common Category)
-        }
-
-        // Find unlocked skins
-        val baseSkins = mutableSetOf("standard")
-        baseSkins.addAll(state.unlockedSkins.split(",").map { it.trim() }.filter { it.isNotEmpty() })
-        
-        if (nextCurrent >= 200) baseSkins.add("cyberpunk")
-        if (nextCurrent >= 1000) baseSkins.add("pirate")
-        if (nextCurrent >= 5000) baseSkins.add("astronaut")
-        if (nextCurrent >= 25000) baseSkins.add("god")
-        if (nextCurrent >= 50000) baseSkins.add("steampunk")
-        if (nextCurrent >= 150000) baseSkins.add("retro")
-        if (nextCurrent >= 500000) baseSkins.add("shadow")
-        if (nextCurrent >= 2000000) baseSkins.add("royal")
-        if (nextCurrent >= 5000000) baseSkins.add("lava_fire")
-        if (nextCurrent >= 10000000) baseSkins.add("cosmic")
-        if (nextCurrent >= 100000000) baseSkins.add("neon_cyber")
-        if (nextCurrent >= 1000000000) baseSkins.add("magic_aurora")
-
-        val currentUnlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
-        val newlyUnlockedSkins = baseSkins.filter { !currentUnlockedList.contains(it) }
-
-        // Send UI events for milestones (only if ascending to protect against noise, but let level decrease go silent)
-        if (nextLevel > state.currentLevel) {
-            _uiEvents.emit(GameUiEvent.LevelUp(nextLevel, getAnimalNameForLevel(nextLevel)))
-        }
-
-        newlyUnlockedSkins.forEach { skinId ->
-            _uiEvents.emit(GameUiEvent.SkinUnlocked(getSkinNameForId(skinId), skinId))
-        }
-
-        val highestNewSkin = newlyUnlockedSkins.lastOrNull()
-        // If highestNewSkin is unlocked, auto-apply it. Otherwise, fallback to standard if currently equipped skin gets locked.
-        val finalEquippedSkinId = if (highestNewSkin != null) {
-            highestNewSkin
-        } else if (baseSkins.contains(state.equippedSkinId)) {
-            state.equippedSkinId
-        } else {
-            "standard"
-        }
-
-        val updatedState = state.copy(
-            totalClicks = nextCurrent, // totalClicks and currentClicks completely in sync
-            currentClicks = nextCurrent,
-            currentLevel = nextLevel,
-            unlockedSkins = baseSkins.joinToString(","),
-            equippedSkinId = finalEquippedSkinId
-        )
-
-        _playerStateMem.value = updatedState
-        isSavePending = true
-    }
-
     fun buyUpgrade(upgradeId: String) {
         viewModelScope.launch {
-            val state = _playerStateMem.value ?: return@launch
-            val currentVal = when (upgradeId) {
-                "click_power" -> state.clickPowerLevel
-                "hamster_wheel" -> state.hamsterWheelCount
-                "cat_scratch" -> state.catScratchCount
-                "dog_bone" -> state.dogBoneCount
-                "dragon_flame" -> state.dragonFlameCount
-                "elephant_stampede" -> state.elephantStampedeCount
-                "cheetah_nitro" -> state.cheetahNitroCount
-                "phoenix_flight" -> state.phoenixFlightCount
-                "black_hole" -> state.blackHoleCount
-                else -> 0
-            }
-
-            val cost = getUpgradeCost(upgradeId, currentVal)
-            if (state.currentClicks >= cost) {
-                val nextClicks = state.currentClicks - cost
-                _liveClicks.value = nextClicks
-
-                val updatedState = when (upgradeId) {
-                    "click_power" -> state.copy(clickPowerLevel = state.clickPowerLevel + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "hamster_wheel" -> state.copy(hamsterWheelCount = state.hamsterWheelCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "cat_scratch" -> state.copy(catScratchCount = state.catScratchCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "dog_bone" -> state.copy(dogBoneCount = state.dogBoneCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "dragon_flame" -> state.copy(dragonFlameCount = state.dragonFlameCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "elephant_stampede" -> state.copy(elephantStampedeCount = state.elephantStampedeCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "cheetah_nitro" -> state.copy(cheetahNitroCount = state.cheetahNitroCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "phoenix_flight" -> state.copy(phoenixFlightCount = state.phoenixFlightCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    "black_hole" -> state.copy(blackHoleCount = state.blackHoleCount + 1, currentClicks = nextClicks, totalClicks = nextClicks)
-                    else -> state.copy(currentClicks = nextClicks, totalClicks = nextClicks)
+            stateMutex.withLock {
+                val state = _playerStateMem.value ?: return@withLock
+                val currentVal = when (upgradeId) {
+                    "click_power" -> state.clickPowerLevel
+                    "hamster_wheel" -> state.hamsterWheelCount
+                    "cat_scratch" -> state.catScratchCount
+                    "dog_bone" -> state.dogBoneCount
+                    "dragon_flame" -> state.dragonFlameCount
+                    "elephant_stampede" -> state.elephantStampedeCount
+                    "cheetah_nitro" -> state.cheetahNitroCount
+                    "phoenix_flight" -> state.phoenixFlightCount
+                    "black_hole" -> state.blackHoleCount
+                    else -> 0
                 }
 
-                SynthesizedAudioManager.playPurchase()
-                updateStateInMemoryAndCheckMilestones(updatedState, nextClicks, nextClicks)
-                syncUserWithLeaderboard(updatedState)
-            } else {
-                // We don't dispatch an English error or Greek hardcoded error, we use simple toast context or let the UI handle affordances
+                val cost = getUpgradeCost(upgradeId, currentVal)
+                if (state.currentClicks >= cost) {
+                    val nextClicks = state.currentClicks - cost
+                    _liveClicks.value = nextClicks
+
+                    val updatedState = when (upgradeId) {
+                        "click_power" -> state.copy(clickPowerLevel = state.clickPowerLevel + 1, currentClicks = nextClicks)
+                        "hamster_wheel" -> state.copy(hamsterWheelCount = state.hamsterWheelCount + 1, currentClicks = nextClicks)
+                        "cat_scratch" -> state.copy(catScratchCount = state.catScratchCount + 1, currentClicks = nextClicks)
+                        "dog_bone" -> state.copy(dogBoneCount = state.dogBoneCount + 1, currentClicks = nextClicks)
+                        "dragon_flame" -> state.copy(dragonFlameCount = state.dragonFlameCount + 1, currentClicks = nextClicks)
+                        "elephant_stampede" -> state.copy(elephantStampedeCount = state.elephantStampedeCount + 1, currentClicks = nextClicks)
+                        "cheetah_nitro" -> state.copy(cheetahNitroCount = state.cheetahNitroCount + 1, currentClicks = nextClicks)
+                        "phoenix_flight" -> state.copy(phoenixFlightCount = state.phoenixFlightCount + 1, currentClicks = nextClicks)
+                        "black_hole" -> state.copy(blackHoleCount = state.blackHoleCount + 1, currentClicks = nextClicks)
+                        else -> state.copy(currentClicks = nextClicks)
+                    }
+
+                    SynthesizedAudioManager.playPurchase()
+                    val finalState = checkAndApplyMilestonesAndSkins(updatedState, nextClicks)
+                    _playerStateMem.value = finalState
+                    isSavePending = true
+                    syncUserWithLeaderboard(finalState)
+                }
             }
         }
     }
 
     fun equipSkin(skinId: String) {
         viewModelScope.launch {
-            val state = _playerStateMem.value ?: return@launch
-            val unlockedSet = state.unlockedSkins.split(",").map { it.trim() }.toSet()
-            if (unlockedSet.contains(skinId)) {
-                val updated = state.copy(equippedSkinId = skinId)
-                _playerStateMem.value = updated
-                repository.updatePlayerState(updated) // Persist skin selection instantly
+            stateMutex.withLock {
+                val state = _playerStateMem.value ?: return@withLock
+                val unlockedSet = state.unlockedSkins.split(",").map { it.trim() }.toSet()
+                if (unlockedSet.contains(skinId)) {
+                    val updated = state.copy(equippedSkinId = skinId)
+                    _playerStateMem.value = updated
+                    repository.updatePlayerState(updated) // Persist skin selection instantly
+                }
             }
         }
     }
@@ -591,16 +538,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun startAutoClickerLoop() {
         while (true) {
             delay(100)
-            val state = _playerStateMem.value ?: continue
-            val cps = calculateCPS(state)
-            if (cps > 0) {
-                val increment = cps * 0.1
-                val nextCurrent = state.currentClicks + increment.toLong()
+            if (isClickerLocked.value) continue // Freeze auto clicks when banned!
+            
+            stateMutex.withLock {
+                val state = _playerStateMem.value ?: return@withLock
+                val cps = calculateCPS(state)
+                if (cps > 0) {
+                    val increment = cps * 0.1
+                    val nextCurrent = state.currentClicks + increment.toLong()
 
-                _liveClicks.value = nextCurrent
-                
-                // Advance evolution tiers dynamically in local memory as counts ticking
-                updateStateInMemoryAndCheckMilestones(state, nextCurrent, nextCurrent)
+                    _liveClicks.value = nextCurrent
+                    
+                    val finalState = checkAndApplyMilestonesAndSkins(state, nextCurrent)
+                    _playerStateMem.value = finalState
+                    isSavePending = true
+                }
             }
         }
     }
@@ -738,5 +690,77 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             "magic_aurora" -> 1000000000
             else -> 0
         }
+    }
+
+    private fun checkAndApplyBanStatus(state: PlayerState, nowMs: Long): Boolean {
+        if (state.banExpirationTime > nowMs) {
+            val remSeconds = (state.banExpirationTime - nowMs) / 1000L
+            isClickerLocked.value = true
+            autoclickerBanTimeRemaining.value = remSeconds
+            autoclickerOffenses.value = state.autoclickerOffenseCount
+            startBanCountdownTimer(state.banExpirationTime)
+            return true
+        } else {
+            isClickerLocked.value = false
+            autoclickerBanTimeRemaining.value = 0L
+            return false
+        }
+    }
+
+    private suspend fun checkAndApplyMilestonesAndSkins(
+        state: PlayerState,
+        nextCurrent: Long
+    ): PlayerState {
+        val calculatedLevel = calculateLevelForClicks(nextCurrent)
+        val nextLevel = maxOf(state.currentLevel, calculatedLevel)
+
+        // Find unlocked skins
+        val baseSkins = mutableSetOf("standard")
+        baseSkins.addAll(state.unlockedSkins.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+        
+        if (nextCurrent >= 200) baseSkins.add("cyberpunk")
+        if (nextCurrent >= 1000) baseSkins.add("pirate")
+        if (nextCurrent >= 5000) baseSkins.add("astronaut")
+        if (nextCurrent >= 25000) baseSkins.add("god")
+        if (nextCurrent >= 50000) baseSkins.add("steampunk")
+        if (nextCurrent >= 150000) baseSkins.add("retro")
+        if (nextCurrent >= 500000) baseSkins.add("shadow")
+        if (nextCurrent >= 2000000) baseSkins.add("royal")
+        if (nextCurrent >= 5000000) baseSkins.add("lava_fire")
+        if (nextCurrent >= 10000000) baseSkins.add("cosmic")
+        if (nextCurrent >= 100000000) baseSkins.add("neon_cyber")
+        if (nextCurrent >= 1000000000) baseSkins.add("magic_aurora")
+
+        val currentUnlockedList = state.unlockedSkins.split(",").map { it.trim() }.toSet()
+        val newlyUnlockedSkins = baseSkins.filter { !currentUnlockedList.contains(it) }
+
+        // Send UI events for milestones
+        if (nextLevel > state.currentLevel) {
+            _uiEvents.emit(GameUiEvent.LevelUp(nextLevel, getAnimalNameForLevel(nextLevel)))
+        }
+
+        newlyUnlockedSkins.forEach { skinId ->
+            _uiEvents.emit(GameUiEvent.SkinUnlocked(getSkinNameForId(skinId), skinId))
+        }
+
+        val highestNewSkin = newlyUnlockedSkins.lastOrNull()
+        val finalEquippedSkinId = if (highestNewSkin != null) {
+            highestNewSkin
+        } else if (baseSkins.contains(state.equippedSkinId)) {
+            state.equippedSkinId
+        } else {
+            "standard"
+        }
+
+        val delta = nextCurrent - state.currentClicks
+        val nextTotal = if (delta > 0) state.totalClicks + delta else state.totalClicks
+
+        return state.copy(
+            totalClicks = nextTotal,
+            currentClicks = nextCurrent,
+            currentLevel = nextLevel,
+            unlockedSkins = baseSkins.joinToString(","),
+            equippedSkinId = finalEquippedSkinId
+        )
     }
 }

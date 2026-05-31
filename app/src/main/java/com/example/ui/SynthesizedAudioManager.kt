@@ -47,12 +47,12 @@ object SynthesizedAudioManager {
 
     fun playClick() {
         if (sfxVolume <= 0.01f) return
-        playBuffer(clickSample, sfxVolume)
+        playBuffer(clickSample, sfxVolume * 0.5f)
     }
 
     fun playPurchase() {
         if (sfxVolume <= 0.01f) return
-        playBuffer(cashSample, sfxVolume)
+        playBuffer(cashSample, sfxVolume * 0.8f)
     }
 
     @OptIn(DelicateCoroutinesApi::class)

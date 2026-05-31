@@ -13,13 +13,15 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.GameViewModel
 
 class MainActivity : ComponentActivity() {
+  private lateinit var gameViewModel: GameViewModel
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     setContent {
       MyApplicationTheme {
         // Use the Jetpack lifecycles ViewModel provider which auto-injects standard Application
-        val gameViewModel: GameViewModel = viewModel()
+        gameViewModel = viewModel()
         GameScreen(
             viewModel = gameViewModel,
             modifier = Modifier
@@ -27,6 +29,20 @@ class MainActivity : ComponentActivity() {
                 .safeDrawingPadding()
         )
       }
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (::gameViewModel.isInitialized) {
+      gameViewModel.onAppResume()
+    }
+  }
+
+  override fun onPause() {
+    super.onPause()
+    if (::gameViewModel.isInitialized) {
+      gameViewModel.onAppPause()
     }
   }
 }

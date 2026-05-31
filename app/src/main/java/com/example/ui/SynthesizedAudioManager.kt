@@ -8,6 +8,12 @@ import kotlinx.coroutines.*
 import kotlin.math.sin
 
 object SynthesizedAudioManager {
+    private var appContext: android.content.Context? = null
+
+    fun init(context: android.content.Context) {
+        this.appContext = context.applicationContext
+    }
+
     private const val sampleRate = 22050
     private var musicJob: Job? = null
     

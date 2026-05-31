@@ -70,6 +70,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var isSavePending = false
 
     init {
+        SynthesizedAudioManager.init(application)
         val database = GameDatabase.getDatabase(application)
         repository = GameRepository(database.gameDao())
 

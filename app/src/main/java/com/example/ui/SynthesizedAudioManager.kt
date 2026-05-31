@@ -51,61 +51,112 @@ object SynthesizedAudioManager {
         return sample
     }
 
+    private val clickLock = Any()
+    private val cashLock = Any()
+    private var clickTrack: AudioTrack? = null
+    private var cashTrack: AudioTrack? = null
+
+    private fun createStaticTrack(buffer: ShortArray): AudioTrack? {
+        return try {
+            val audioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val builder = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_GAME)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(buffer.size * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    appContext?.let { ctx: android.content.Context ->
+                        try {
+                            val audioContext = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                ctx.createAttributionContext("audio")
+                            } else {
+                                ctx
+                            }
+                            val getAttributionSourceMethod = android.content.Context::class.java.getMethod("getAttributionSource")
+                            val attributionSource = getAttributionSourceMethod.invoke(audioContext)
+                            if (attributionSource != null) {
+                                val setAttributionSourceMethod = builder.javaClass.getMethod(
+                                    "setAttributionSource",
+                                    Class.forName("android.content.AttributionSource")
+                                )
+                                setAttributionSourceMethod.invoke(builder, attributionSource)
+                            }
+                        } catch (ignored: Throwable) {}
+                    }
+                }
+
+                builder.build()
+            } else {
+                @Suppress("DEPRECATION")
+                AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    buffer.size * 2,
+                    AudioTrack.MODE_STATIC
+                )
+            }
+            audioTrack.write(buffer, 0, buffer.size)
+            audioTrack
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            null
+        }
+    }
+
     fun playClick() {
-        if (sfxVolume <= 0.01f) return
-        playBuffer(clickSample, sfxVolume * 0.5f)
+        synchronized(clickLock) {
+            if (sfxVolume <= 0.01f) return
+            try {
+                var track = clickTrack
+                if (track == null) {
+                    track = createStaticTrack(clickSample)
+                    clickTrack = track
+                }
+                track?.let {
+                    it.setVolume(sfxVolume * 0.5f)
+                    it.stop()
+                    it.reloadStaticData()
+                    it.play()
+                }
+            } catch (t: Throwable) {
+                try { clickTrack?.release() } catch (ignored: Throwable) {}
+                clickTrack = null
+            }
+        }
     }
 
     fun playPurchase() {
-        if (sfxVolume <= 0.01f) return
-        playBuffer(cashSample, sfxVolume * 0.8f)
-    }
-
-    @OptIn(DelicateCoroutinesApi::class)
-    private fun playBuffer(buffer: ShortArray, volume: Float) {
-        GlobalScope.launch(Dispatchers.IO) {
+        synchronized(cashLock) {
+            if (sfxVolume <= 0.01f) return
             try {
-                val audioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    AudioTrack.Builder()
-                        .setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_GAME)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                                .build()
-                        )
-                        .setAudioFormat(
-                            AudioFormat.Builder()
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setSampleRate(sampleRate)
-                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                .build()
-                        )
-                        .setBufferSizeInBytes(buffer.size * 2)
-                        .setTransferMode(AudioTrack.MODE_STATIC)
-                        .build()
-                } else {
-                    @Suppress("DEPRECATION")
-                    AudioTrack(
-                        AudioManager.STREAM_MUSIC,
-                        sampleRate,
-                        AudioFormat.CHANNEL_OUT_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        buffer.size * 2,
-                        AudioTrack.MODE_STATIC
-                    )
+                var track = cashTrack
+                if (track == null) {
+                    track = createStaticTrack(cashSample)
+                    cashTrack = track
                 }
-                audioTrack.write(buffer, 0, buffer.size)
-                audioTrack.setVolume(volume)
-                audioTrack.play()
-                delay((buffer.size.toFloat() / sampleRate * 1000).toLong() + 50)
-                try {
-                    audioTrack.stop()
-                } catch (ignored: Throwable) {}
-                try {
-                    audioTrack.release()
-                } catch (ignored: Throwable) {}
+                track?.let {
+                    it.setVolume(sfxVolume * 0.8f)
+                    it.stop()
+                    it.reloadStaticData()
+                    it.play()
+                }
             } catch (t: Throwable) {
-                t.printStackTrace()
+                try { cashTrack?.release() } catch (ignored: Throwable) {}
+                cashTrack = null
             }
         }
     }
@@ -140,7 +191,7 @@ object SynthesizedAudioManager {
                     
                     try {
                         val audioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                            AudioTrack.Builder()
+                            val builder = AudioTrack.Builder()
                                 .setAudioAttributes(
                                     AudioAttributes.Builder()
                                         .setUsage(AudioAttributes.USAGE_GAME)
@@ -156,7 +207,29 @@ object SynthesizedAudioManager {
                                 )
                                 .setBufferSizeInBytes(buffer.size * 2)
                                 .setTransferMode(AudioTrack.MODE_STATIC)
-                                .build()
+
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                appContext?.let { ctx: android.content.Context ->
+                                    try {
+                                        val audioContext = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                            ctx.createAttributionContext("audio")
+                                        } else {
+                                            ctx
+                                        }
+                                        val getAttributionSourceMethod = android.content.Context::class.java.getMethod("getAttributionSource")
+                                        val attributionSource = getAttributionSourceMethod.invoke(audioContext)
+                                        if (attributionSource != null) {
+                                            val setAttributionSourceMethod = builder.javaClass.getMethod(
+                                                "setAttributionSource",
+                                                Class.forName("android.content.AttributionSource")
+                                            )
+                                            setAttributionSourceMethod.invoke(builder, attributionSource)
+                                        }
+                                    } catch (ignored: Throwable) {}
+                                }
+                            }
+
+                            builder.build()
                         } else {
                             @Suppress("DEPRECATION")
                             AudioTrack(
@@ -178,6 +251,8 @@ object SynthesizedAudioManager {
                         try {
                             audioTrack.release()
                         } catch (ignored: Throwable) {}
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (t: Throwable) {
                         delay(1000)
                     }
